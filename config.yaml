@@ -1,0 +1,27 @@
+# Candlecore Configuration File
+
+# Initial account balance for backtesting/paper trading
+initial_balance: 10000.0
+
+# Trading fees (as decimal percentages)
+taker_fee: 0.001 # 0.1%
+maker_fee: 0.0005 # 0.05%
+
+# Slippage simulation in basis points
+slippage_bps: 5.0 # 0.05%
+
+# Data source
+data_source: 'data/candles.csv'
+
+# State persistence directory
+state_directory: '.state'
+
+# Logging level: debug, info, warn, error
+log_level: 'info'
+
+# Strategy configuration
+strategy:
+  name: 'simple_ma'
+  fast_period: 10
+  slow_period: 30
+  position_size: 1000.0 # USD value per trade
