@@ -1,5 +1,4 @@
 # Binaries
-candlecore
 candlecore.exe
 *.exe
 *.dll
@@ -17,7 +16,7 @@ go.work
 
 # State files
 .state/
-*.json
+.state/*.json
 
 # Data files (but allow README)
 data/*

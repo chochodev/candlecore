@@ -16,6 +16,18 @@ data_source: 'data/candles.csv'
 # State persistence directory
 state_directory: '.state'
 
+# Database configuration (PostgreSQL for state persistence)
+# Set enabled: true to use PostgreSQL instead of file-based storage
+database:
+  enabled: false # Set to true to use PostgreSQL
+  host: localhost
+  port: 5432
+  user: candlecore
+  password: '' # Set password here or use CANDLECORE_DB_PASSWORD env var
+  dbname: candlecore
+  sslmode: disable # Use 'require' for production
+  account_id: 1 # Which account ID to use (from accounts table)
+
 # Logging level: debug, info, warn, error
 log_level: 'info'
 
