@@ -29,7 +29,7 @@ database:
   account_id: 1 # Which account ID to use (from accounts table)
 
 # Logging level: debug, info, warn, error
-log_level: 'info'
+log_level: 'error' # Use error to only show critical issues (UI handles info display)
 
 # Strategy configuration
 strategy:

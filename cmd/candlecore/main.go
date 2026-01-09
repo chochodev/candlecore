@@ -10,15 +10,24 @@ import (
 	"time"
 
 	"candlecore/internal/broker"
+	"candlecore/internal/cmd"
 	"candlecore/internal/config"
 	"candlecore/internal/engine"
+	"candlecore/internal/fetcher"
 	"candlecore/internal/loader"
 	"candlecore/internal/logger"
 	"candlecore/internal/store"
 	"candlecore/internal/strategy"
+	"candlecore/internal/ui"
 )
 
 func main() {
+	// Check if running as CLI command
+	if len(os.Args) > 1 {
+		cmd.Execute()
+		return
+	}
+	
 	// Parse command-line flags
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
 	flag.Parse()
@@ -32,23 +41,26 @@ func main() {
 
 	// Initialize logger
 	log := logger.New(cfg.LogLevel)
-	log.Info("Starting Candlecore trading engine")
+	
+	// Display banner
+	ui.PrintBanner()
+	ui.PrintSuccess("Candlecore trading engine initialized")
+	fmt.Println()
 
 	// Initialize state store based on configuration
 	var stateStore engine.StateStore
 	
+	ui.PrintSection("STATE PERSISTENCE")
+	
 	if cfg.Database.Enabled {
-		log.Info("Initializing PostgreSQL state store", 
-			"host", cfg.Database.Host, 
-			"database", cfg.Database.DBName,
-		)
+		ui.PrintInfo(fmt.Sprintf("Connecting to PostgreSQL at %s:%d...", cfg.Database.Host, cfg.Database.Port))
 		
 		pgStore, err := store.NewPostgresStore(
 			cfg.GetDatabaseConnectionString(),
 			cfg.Database.AccountID,
 		)
 		if err != nil {
-			log.Error("Failed to connect to PostgreSQL", "error", err)
+			ui.PrintError(fmt.Sprintf("Failed to connect to PostgreSQL: %v", err))
 			os.Exit(1)
 		}
 		defer pgStore.Close()
@@ -58,20 +70,21 @@ func main() {
 		defer initCancel()
 		
 		if err := pgStore.Initialize(initCtx); err != nil {
-			log.Error("Failed to initialize database schema", "error", err)
+			ui.PrintError(fmt.Sprintf("Failed to initialize database schema: %v", err))
 			os.Exit(1)
 		}
-		log.Info("Database schema initialized successfully")
+		ui.PrintSuccess("PostgreSQL connected and schema initialized")
 		
 		stateStore = pgStore
 	} else {
-		log.Info("Using file-based state store", "directory", cfg.StateDirectory)
+		ui.PrintInfo(fmt.Sprintf("Using file-based storage: %s", cfg.StateDirectory))
 		
 		fileStore, err := store.NewFileStore(cfg.StateDirectory)
 		if err != nil {
-			log.Error("Failed to initialize file store", "error", err)
+			ui.PrintError(fmt.Sprintf("Failed to initialize file store: %v", err))
 			os.Exit(1)
 		}
+		ui.PrintSuccess("File store initialized")
 		
 		stateStore = fileStore
 	}
@@ -119,29 +132,46 @@ func main() {
 		cancel()
 	}()
 
-	// Run the engine with candle data
-	// In production, this would load from a file or database
-	candles := loadCandleData(cfg.DataSource, log)
+	// Load candle data based on configuration
+	var candles []engine.Candle
 	
-	log.Info("Starting backtesting run",
-		"candles", len(candles),
-		"initial_balance", cfg.InitialBalance,
-		"strategy", strat.Name(),
-	)
+	ui.PrintSection("DATA LOADING")
+	
+	if cfg.LiveData.Enabled {
+		ui.PrintInfo(fmt.Sprintf("Fetching live %s data from CoinGecko...", cfg.LiveData.Symbol))
+		
+		var err error
+		candles, err = fetchLiveData(cfg, log)
+		if err != nil {
+			ui.PrintWarning(fmt.Sprintf("Live data fetch failed: %v", err))
+			ui.PrintInfo("Falling back to synthetic data...")
+			candles = generateSyntheticData(log)
+		} else {
+			ui.PrintSuccess(fmt.Sprintf("Fetched %d candles from CoinGecko", len(candles)))
+		}
+	} else {
+		ui.PrintInfo(fmt.Sprintf("Loading data from: %s", cfg.DataSource))
+		candles = loadCandleData(cfg.DataSource, log)
+	}
+	
+	ui.PrintConfigSummary(cfg.LiveData.Symbol, "1d", len(candles), strat.Name())
+	
+	ui.PrintSection("BACKTEST EXECUTION")
+	ui.PrintInfo(fmt.Sprintf("Starting backtest with $%.2f initial balance", cfg.InitialBalance))
+	fmt.Println()
 
 	// Run the engine
 	if err := tradingEngine.Run(ctx, candles); err != nil {
-		log.Error("Engine failed", "error", err)
+		ui.PrintError(fmt.Sprintf("Engine failed: %v", err))
 		os.Exit(1)
 	}
 
 	// Print final results
+	fmt.Println()
 	account := paperBroker.GetAccount()
-	log.Info("Backtest completed",
-		"final_balance", account.Balance,
-		"total_pnl", account.Balance-cfg.InitialBalance,
-		"total_trades", len(account.TradeHistory),
-	)
+	
+	ui.PrintPerformanceSummary(account, cfg.InitialBalance)
+	ui.PrintPositionTable(account.Positions)
 
 	// Save final state
 	if err := stateStore.SaveState(paperBroker); err != nil {
@@ -166,9 +196,13 @@ func loadCandleData(source string, log logger.Logger) []engine.Candle {
 	
 	// If CSV loading fails, generate synthetic data for testing
 	log.Warn("Failed to load CSV, using synthetic data", "error", err)
-	
+	return generateSyntheticData(log)
+}
+
+// generateSyntheticData creates synthetic candle data for testing
+func generateSyntheticData(log logger.Logger) []engine.Candle {
 	startTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	candles = make([]engine.Candle, 100)
+	candles := make([]engine.Candle, 100)
 	basePrice := 100.0
 	
 	for i := 0; i < 100; i++ {
@@ -190,4 +224,50 @@ func loadCandleData(source string, log logger.Logger) []engine.Candle {
 	
 	log.Info("Generated synthetic candle data", "count", len(candles))
 	return candles
+}
+
+// fetchLiveData fetches live candle data from CoinGecko
+func fetchLiveData(cfg *config.Config, log logger.Logger) ([]engine.Candle, error) {
+	cgFetcher := fetcher.NewCoinGeckoFetcher()
+	
+	// Convert symbol to CoinGecko coin ID
+	coinID := fetcher.CoinIDFromSymbol(cfg.LiveData.Symbol)
+	if coinID == "" {
+		return nil, fmt.Errorf("unsupported symbol: %s (supported: BTCUSDT, ETHUSDT)", cfg.LiveData.Symbol)
+	}
+	
+	if !fetcher.ValidateCoinID(coinID) {
+		return nil, fmt.Errorf("unsupported coin: %s", coinID)
+	}
+	
+	// CoinGecko provides daily candles, calculate days needed
+	days := cfg.LiveData.InitialFetch / 24
+	if days < 1 {
+		days = 1
+	}
+	if days > 365 {
+		days = 365
+	}
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	
+	log.Info("Fetching candles from CoinGecko",
+		"coin", coinID,
+		"days", days,
+		"expected_candles", cfg.LiveData.InitialFetch,
+	)
+	
+	candles, err := cgFetcher.FetchCandles(ctx, coinID, days)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch candles: %w", err)
+	}
+	
+	// Limit to requested number of candles (most recent)
+	if len(candles) > cfg.LiveData.InitialFetch {
+		candles = candles[len(candles)-cfg.LiveData.InitialFetch:]
+	}
+	
+	log.Info("Successfully fetched live candles from CoinGecko", "count", len(candles))
+	return candles, nil
 }

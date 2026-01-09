@@ -24,6 +24,9 @@ type Config struct {
 	// Database configuration (optional, for PostgreSQL state store)
 	Database DatabaseConfig `yaml:"database"`
 
+	// Live data configuration
+	LiveData LiveDataConfig `yaml:"live_data"`
+
 	// Logging
 	LogLevel string `yaml:"log_level"` // debug, info, warn, error
 
@@ -41,6 +44,15 @@ type DatabaseConfig struct {
 	DBName   string `yaml:"dbname"`
 	SSLMode  string `yaml:"sslmode"` // disable, require, verify-ca, verify-full
 	AccountID int64 `yaml:"account_id"` // Which account ID to use
+}
+
+// LiveDataConfig holds live data fetching settings
+type LiveDataConfig struct {
+	Enabled      bool   `yaml:"enabled"`        // Fetch live data vs historical
+	Symbol       string `yaml:"symbol"`         // Trading pair (BTCUSDT, ETHUSDT)
+	Interval     string `yaml:"interval"`       // Not used by CoinGecko (daily candles)
+	InitialFetch int    `yaml:"initial_fetch"`  // Number of candles to fetch (CoinGecko: days)
+	PollInterval int    `yaml:"poll_interval"`  // Seconds between polling for new candles
 }
 
 // StrategyConfig holds strategy-specific parameters
@@ -79,6 +91,13 @@ func Load(path string) (*Config, error) {
 			DBName:    "candlecore",
 			SSLMode:   "disable",
 			AccountID: 1,
+		},
+		LiveData: LiveDataConfig{
+			Enabled:      false,
+			Symbol:       "BTCUSDT",
+			Interval:     "15m",
+			InitialFetch: 100,
+			PollInterval: 60,
 		},
 		Strategy: StrategyConfig{
 			Name:         "simple_ma",
@@ -191,6 +210,33 @@ func applyEnvOverrides(cfg *Config) {
 		}
 	}
 
+	// Live data settings
+	if val := os.Getenv("CANDLECORE_LIVE_DATA_ENABLED"); val != "" {
+		if b, err := strconv.ParseBool(val); err == nil {
+			cfg.LiveData.Enabled = b
+		}
+	}
+
+	if val := os.Getenv("CANDLECORE_LIVE_DATA_SYMBOL"); val != "" {
+		cfg.LiveData.Symbol = val
+	}
+
+	if val := os.Getenv("CANDLECORE_LIVE_DATA_INTERVAL"); val != "" {
+		cfg.LiveData.Interval = val
+	}
+
+	if val := os.Getenv("CANDLECORE_LIVE_DATA_INITIAL_FETCH"); val != "" {
+		if i, err := strconv.Atoi(val); err == nil {
+			cfg.LiveData.InitialFetch = i
+		}
+	}
+
+	if val := os.Getenv("CANDLECORE_LIVE_DATA_POLL_INTERVAL"); val != "" {
+		if i, err := strconv.Atoi(val); err == nil {
+			cfg.LiveData.PollInterval = i
+		}
+	}
+
 	// Strategy settings
 	if val := os.Getenv("CANDLECORE_STRATEGY_NAME"); val != "" {
 		cfg.Strategy.Name = val
@@ -257,6 +303,22 @@ func (c *Config) Validate() error {
 		}
 		if c.Database.AccountID <= 0 {
 			return fmt.Errorf("database account_id must be positive")
+		}
+	}
+
+	// Validate live data config if enabled
+	if c.LiveData.Enabled {
+		if c.LiveData.Symbol == "" {
+			return fmt.Errorf("live_data symbol is required when live_data is enabled")
+		}
+		if c.LiveData.Interval == "" {
+			return fmt.Errorf("live_data interval is required when live_data is enabled")
+		}
+		if c.LiveData.InitialFetch <= 0 {
+			return fmt.Errorf("live_data initial_fetch must be positive")
+		}
+		if c.LiveData.PollInterval <= 0 {
+			return fmt.Errorf("live_data poll_interval must be positive")
 		}
 	}
 

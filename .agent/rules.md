@@ -1,5 +1,37 @@
 # Candlecore Project Rules
 
+## Market Scope
+
+### Target Markets
+
+- Crypto spot markets only (BTC/USDT, ETH/USDT)
+- No futures, options, or leveraged instruments
+- No stock or forex markets
+- Medium timeframes: 5m, 15m candles
+- Paper trading and backtesting only
+
+### Data Sources
+
+- Free public APIs (Binance)
+- Live 24/7 market data
+- No paid data feeds
+- No authentication required for public endpoints
+
+### Constraints
+
+- Candle-based strategies only
+- No real money trading
+- No derivatives or leverage
+- No multi-asset portfolio logic (single instrument focus)
+
+### Out of Scope
+
+- Real capital deployment
+- Live exchange integration for order execution
+- Paid market data
+- Stock/forex markets
+- High-frequency trading
+
 ## Documentation Standards
 
 - Do not create markdown files to document changes
@@ -46,3 +78,11 @@
 - Be concise and direct in explanations
 - Avoid overwhelming with excessive content or unnecessary detail
 - Answer what was asked without over-explaining
+
+## Development Documentation
+
+- Update dev.md when adding new CLI commands
+- Document critical development decisions in dev.md
+- Add troubleshooting steps for common issues
+- Keep command examples up to date
+- Document new dependencies and their purposes
