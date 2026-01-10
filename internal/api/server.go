@@ -1,18 +1,21 @@
 package api
 
 import (
+	"candlecore/internal/exchange"
+	"candlecore/internal/scraper"
+	ws "candlecore/internal/websocket"
 	"net/http"
 	"time"
-
-	"candlecore/internal/scraper"
 
 	"github.com/gin-gonic/gin"
 )
 
 // Server represents the API server
 type Server struct {
-	router  *gin.Engine
-	dataDir string
+	router     *gin.Engine
+	dataDir    string
+	hub        *ws.Hub
+	controller *BotController
 }
 
 // NewServer creates a new API server
@@ -22,12 +25,26 @@ func NewServer(dataDir string) *Server {
 	router := gin.Default()
 	router.Use(corsMiddleware())
 	
+	// Create WebSocket hub
+	hub := ws.NewHub()
+	go hub.Run()
+	
+	// Create exchange provider
+	provider := exchange.NewLocalFileProvider(dataDir)
+	
+	// Create bot controller
+	controller := NewBotController(provider, hub)
+	
 	s := &Server{
-		router:  router,
-		dataDir: dataDir,
+		router:     router,
+		dataDir:    dataDir,
+		hub:        hub,
+		controller: controller,
 	}
 	
 	s.setupRoutes()
+	controller.SetupRoutes(router)
+	
 	return s
 }
 
@@ -39,12 +56,12 @@ func (s *Server) setupRoutes() {
 		api.GET("/data", s.listData)
 		api.GET("/data/:coin/:interval", s.getCandleData)
 		
-		// Backtest endpoints
-		api.POST("/backtest", s.runBacktest)
-		api.GET("/backtest/results/:id", s.getBacktestResults)
-		
 		// Health check
 		api.GET("/health", s.healthCheck)
+		
+		// Available symbols and timeframes
+		api.GET("/symbols", s.getSymbols)
+		api.GET("/timeframes", s.getTimeframes)
 	}
 }
 
@@ -163,54 +180,28 @@ func (s *Server) getCandleData(c *gin.Context) {
 	})
 }
 
-// BacktestRequest represents a backtest request
-type BacktestRequest struct {
-	CoinID         string  `json:"coin_id" binding:"required"`
-	Interval       string  `json:"interval" binding:"required"`
-	Strategy       string  `json:"strategy" binding:"required"`
-	InitialBalance float64 `json:"initial_balance"`
-	FastPeriod     int     `json:"fast_period"`
-	SlowPeriod     int     `json:"slow_period"`
-	PositionSize   float64 `json:"position_size"`
-}
-
-// runBacktest executes a backtest
-func (s *Server) runBacktest(c *gin.Context) {
-	var req BacktestRequest
-	
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request: " + err.Error(),
-		})
-		return
-	}
-	
-	// TODO: Implement actual backtest execution
-	// For now, return a mock response
+// getSymbols returns available trading pairs
+func (s *Server) getSymbols(c *gin.Context) {
+	provider := exchange.NewLocalFileProvider(s.dataDir)
+	symbols := provider.GetSupportedSymbols()
 	
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Backtest queued",
-		"id":      "backtest-123",
-		"status":  "pending",
+		"symbols": symbols,
 	})
 }
 
-// getBacktestResults returns backtest results
-func (s *Server) getBacktestResults(c *gin.Context) {
-	id := c.Param("id")
+// getTimeframes returns supported timeframes
+func (s *Server) getTimeframes(c *gin.Context) {
+	provider := exchange.NewLocalFileProvider(s.dataDir)
+	timeframes := provider.GetSupportedTimeframes()
 	
-	// TODO: Implement result retrieval
+	tfStrings := make([]string, len(timeframes))
+	for i, tf := range timeframes {
+		tfStrings[i] = string(tf)
+	}
 	
 	c.JSON(http.StatusOK, gin.H{
-		"id":     id,
-		"status": "completed",
-		"results": gin.H{
-			"initial_balance": 10000.0,
-			"final_balance":   12500.0,
-			"total_pnl":       2500.0,
-			"total_trades":    15,
-			"win_rate":        0.67,
-		},
+		"timeframes": tfStrings,
 	})
 }
 
@@ -218,7 +209,14 @@ func (s *Server) getBacktestResults(c *gin.Context) {
 func (s *Server) healthCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "healthy",
-		"version": "1.0.0",
+		"version": "2.0.0",
 		"time":    time.Now(),
+		"features": []string{
+			"websocket_streaming",
+			"bot_control",
+			"historical_replay",
+			"multi_timeframe",
+			"indicators",
+		},
 	})
 }
