@@ -2,7 +2,6 @@ package api
 
 import (
 	"candlecore/internal/exchange"
-	"candlecore/internal/scraper"
 	ws "candlecore/internal/websocket"
 	"net/http"
 	"time"
@@ -52,10 +51,6 @@ func NewServer(dataDir string) *Server {
 func (s *Server) setupRoutes() {
 	api := s.router.Group("/api/v1")
 	{
-		// Data endpoints
-		api.GET("/data", s.listData)
-		api.GET("/data/:coin/:interval", s.getCandleData)
-		
 		// Health check
 		api.GET("/health", s.healthCheck)
 		
@@ -84,100 +79,6 @@ func corsMiddleware() gin.HandlerFunc {
 		
 		c.Next()
 	}
-}
-
-// DataListResponse represents available data files
-type DataListResponse struct {
-	Files []DataFileInfo `json:"files"`
-	Total int            `json:"total"`
-}
-
-// DataFileInfo represents a single data file
-type DataFileInfo struct {
-	CoinID       string    `json:"coin_id"`
-	Interval     string    `json:"interval"`
-	TotalCandles int       `json:"total_candles"`
-	FirstDate    time.Time `json:"first_date"`
-	LastDate     time.Time `json:"last_date"`
-	FileSizeKB   float64   `json:"file_size_kb"`
-	FilePath     string    `json:"file_path"`
-}
-
-// listData returns all available data files
-func (s *Server) listData(c *gin.Context) {
-	scraper := scraper.NewDataScraper(s.dataDir)
-	info, err := scraper.GetDataInfo()
-	
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to get data info",
-		})
-		return
-	}
-	
-	files := make([]DataFileInfo, 0, len(info))
-	for _, data := range info {
-		files = append(files, DataFileInfo{
-			CoinID:       data.CoinID,
-			Interval:     "daily",
-			TotalCandles: data.TotalCandles,
-			FirstDate:    data.FirstDate,
-			LastDate:     data.LastDate,
-			FileSizeKB:   float64(data.FileSize) / 1024,
-			FilePath:     data.FilePath,
-		})
-	}
-	
-	c.JSON(http.StatusOK, DataListResponse{
-		Files: files,
-		Total: len(files),
-	})
-}
-
-// CandleResponse represents candle data
-type CandleResponse struct {
-	Timestamp time.Time `json:"timestamp"`
-	Open      float64   `json:"open"`
-	High      float64   `json:"high"`
-	Low       float64   `json:"low"`
-	Close     float64   `json:"close"`
-	Volume    float64   `json:"volume"`
-}
-
-// getCandleData returns candle data for a coin
-func (s *Server) getCandleData(c *gin.Context) {
-	coinID := c.Param("coin")
-	interval := c.Param("interval")
-	
-	scraper := scraper.NewDataScraper(s.dataDir)
-	candles, err := scraper.GetCoinData(coinID)
-	
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "Data not found for " + coinID,
-		})
-		return
-	}
-	
-	// Convert to response format
-	response := make([]CandleResponse, 0, len(candles))
-	for _, candle := range candles {
-		response = append(response, CandleResponse{
-			Timestamp: candle.Timestamp,
-			Open:      candle.Open,
-			High:      candle.High,
-			Low:       candle.Low,
-			Close:     candle.Close,
-			Volume:    candle.Volume,
-		})
-	}
-	
-	c.JSON(http.StatusOK, gin.H{
-		"coin":     coinID,
-		"interval": interval,
-		"total":    len(response),
-		"candles":  response,
-	})
 }
 
 // getSymbols returns available trading pairs
