@@ -27,7 +27,7 @@ func (s *SimpleMAStrategy) Name() string {
 }
 
 // Analyze analyzes candles using MA crossover
-func (s *SimpleMAStrategy) Analyze(candles []exchange.Candle) (*bot.Decision, error) {
+func (s *SimpleMAStrategy) Analyze(candles []exchange.Candle, currentPos *bot.Position) (*bot.Decision, error) {
 	if len(candles) < s.slowPeriod {
 		return &bot.Decision{
 			Signal: bot.SignalHold,
@@ -35,10 +35,22 @@ func (s *SimpleMAStrategy) Analyze(candles []exchange.Candle) (*bot.Decision, er
 		}, nil
 	}
 
-	// Extract close prices
+	// Extract candle data
 	closes := make([]float64, len(candles))
+	highs := make([]float64, len(candles))
+	lows := make([]float64, len(candles))
 	for i, c := range candles {
 		closes[i] = c.Close
+		highs[i] = c.High
+		lows[i] = c.Low
+	}
+
+	// 🛡️ TREND STRENGTH FILTER (ADX)
+	// If the market is moving sideways ("Crab Market"), avoid trading.
+	adx, err := indicators.ADX(highs, lows, closes, 14)
+	var lastADX float64
+	if err == nil && len(adx) > 0 {
+		lastADX = adx[len(adx)-1]
 	}
 
 	// Calculate MAs
@@ -66,7 +78,16 @@ func (s *SimpleMAStrategy) Analyze(candles []exchange.Candle) (*bot.Decision, er
 		Indicators: map[string]float64{
 			"fast_ma": lastFast,
 			"slow_ma": lastSlow,
+			"adx":     lastADX,
 		},
+	}
+
+	// If Trend is too weak, force HOLD to avoid whipsaws
+	if lastADX > 0 && lastADX < 20 {
+		decision.Signal = bot.SignalHold
+		decision.Confidence = 20
+		decision.Reasoning = fmt.Sprintf("Trend too weak for MA crossover (ADX: %.2f)", lastADX)
+		return decision, nil
 	}
 
 	// Detect crossover
@@ -122,7 +143,7 @@ func (s *RSIStrategy) Name() string {
 }
 
 // Analyze analyzes candles using RSI
-func (s *RSIStrategy) Analyze(candles []exchange.Candle) (*bot.Decision, error) {
+func (s *RSIStrategy) Analyze(candles []exchange.Candle, currentPos *bot.Position) (*bot.Decision, error) {
 	if len(candles) < s.period+1 {
 		return &bot.Decision{
 			Signal: bot.SignalHold,

@@ -39,6 +39,7 @@ type CandleData struct {
 	Low       float64   `json:"low"`
 	Close     float64   `json:"close"`
 	Volume    float64   `json:"volume"`
+	Indicators map[string]float64 `json:"indicators,omitempty"` // Added for chart overlay
 }
 
 // PnLData represents PnL update
@@ -46,6 +47,7 @@ type PnLData struct {
 	Balance       float64 `json:"balance"`
 	TotalPnL      float64 `json:"total_pnl"`
 	UnrealizedPnL float64 `json:"unrealized_pnl,omitempty"`
+	WinRate       float64 `json:"win_rate"` // Added for frontend
 }
 
 // Hub manages WebSocket connections and broadcasts
@@ -102,7 +104,7 @@ func (h *Hub) Run() {
 }
 
 // BroadcastCandle broadcasts a candle update
-func (h *Hub) BroadcastCandle(candle exchange.Candle, symbol, timeframe string) {
+func (h *Hub) BroadcastCandle(candle exchange.Candle, symbol, timeframe string, indicators map[string]float64) {
 	h.broadcast <- Event{
 		Type:      EventTypeCandle,
 		Timestamp: time.Now(),
@@ -115,6 +117,7 @@ func (h *Hub) BroadcastCandle(candle exchange.Candle, symbol, timeframe string) 
 			Low:       candle.Low,
 			Close:     candle.Close,
 			Volume:    candle.Volume,
+			Indicators: indicators,
 		},
 	}
 }

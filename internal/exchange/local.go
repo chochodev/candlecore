@@ -130,6 +130,8 @@ func (p *LocalFileProvider) loadFromFile(symbol string, timeframe Timeframe) ([]
 	}
 	defer file.Close()
 
+
+
 	reader := csv.NewReader(file)
 	
 	// Read header

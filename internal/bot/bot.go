@@ -46,7 +46,7 @@ type Strategy interface {
 	Name() string
 	
 	// Analyze analyzes candles and produces a decision
-	Analyze(candles []exchange.Candle) (*Decision, error)
+	Analyze(candles []exchange.Candle, currentPos *Position) (*Decision, error)
 	
 	// Configure updates strategy parameters
 	Configure(params map[string]interface{}) error
@@ -59,9 +59,10 @@ type Bot struct {
 	timeframe     exchange.Timeframe
 	provider      exchange.DataProvider
 	position      *Position
-	balance       float64
+	balance        float64
 	initialBalance float64
-	trades        []Position
+	trades         []Position
+	balanceHistory []float64
 }
 
 // Config contains bot configuration
@@ -82,6 +83,7 @@ func NewBot(strategy Strategy, provider exchange.DataProvider, config Config) *B
 		balance:        config.InitialBalance,
 		initialBalance: config.InitialBalance,
 		trades:         make([]Position, 0),
+		balanceHistory: []float64{config.InitialBalance},
 	}
 }
 
@@ -94,7 +96,7 @@ func (b *Bot) ProcessCandle(candle exchange.Candle) (*Decision, error) {
 	}
 
 	// Run strategy analysis
-	decision, err := b.strategy.Analyze(candles)
+	decision, err := b.strategy.Analyze(candles, b.position)
 	if err != nil {
 		return nil, err
 	}
@@ -104,6 +106,48 @@ func (b *Bot) ProcessCandle(candle exchange.Candle) (*Decision, error) {
 
 	return decision, nil
 }
+
+// RunBacktest runs a fast backtest on a slice of candles
+func (b *Bot) RunBacktest(candles []exchange.Candle) error {
+	for i, candle := range candles {
+		// Minimum 200 candles for robust strategy warm-up
+		if i < 200 {
+			continue
+		}
+
+		// Run strategy on historical window (last 200 candles)
+		start := i - 199
+		if start < 0 {
+			start = 0
+		}
+		window := candles[start : i+1]
+
+		// Run strategy analysis
+		decision, err := b.strategy.Analyze(window, b.position)
+		if err != nil {
+			return err
+		}
+
+		// Execute decision (this handles positions and balance internally)
+		b.executeDecision(decision, candle)
+		
+		// Record balance for drawdown/sharpe
+		currBalance := b.balance
+		if b.position != nil {
+			// Update unrealized PnL first
+			b.updatePosition(candle.Close)
+			currBalance += b.position.UnrealizedPnL
+		}
+		b.balanceHistory = append(b.balanceHistory, currBalance)
+	}
+	return nil
+}
+
+// GetBalanceHistory returns the history of balance/equity
+func (b *Bot) GetBalanceHistory() []float64 {
+	return b.balanceHistory
+}
+
 
 // executeDecision executes a trading decision
 func (b *Bot) executeDecision(decision *Decision, candle exchange.Candle) {

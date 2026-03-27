@@ -20,8 +20,11 @@ type BotController struct {
 	bot          *bot.Bot
 	hub          *websocket.Hub
 	provider     exchange.DataProvider
+	wallet       *exchange.VirtualWallet // For dry-run mode
 	isRunning    bool
 	replayMode   bool
+	replaySpeed  time.Duration // Delay between candles (default 1s)
+	dryRun       bool          // Dry-run mode flag
 	symbol       string
 	timeframe    exchange.Timeframe
 	strategyName string
@@ -34,8 +37,11 @@ func NewBotController(provider exchange.DataProvider, hub *websocket.Hub) *BotCo
 	return &BotController{
 		provider:     provider,
 		hub:          hub,
+		wallet:       exchange.NewVirtualWallet(10000.0), // $10k virtual balance
 		isRunning:    false,
-		replayMode:   false,
+		replayMode:   true,                     // Default to replay mode
+		replaySpeed:  1 * time.Second,          // Default 1 second per candle
+		dryRun:       true,                     // Default to dry-run for safety
 		symbol:       "bitcoin",
 		timeframe:    exchange.Timeframe1h,
 		strategyName: "ma_crossover",
@@ -52,15 +58,10 @@ func (bc *BotController) Start() error {
 		return fmt.Errorf("bot is already running")
 	}
 
-	// Create strategy
-	var strategy bot.Strategy
-	switch bc.strategyName {
-	case "ma_crossover":
-		strategy = strategies.NewSimpleMAStrategy(10, 30)
-	case "rsi":
-		strategy = strategies.NewRSIStrategy(14, 30, 70)
-	default:
-		return fmt.Errorf("unknown strategy: %s", bc.strategyName)
+	// Create strategy using registry
+	strategy, err := strategies.GetStrategy(bc.strategyName)
+	if err != nil {
+		return fmt.Errorf("failed to create strategy: %w", err)
 	}
 
 	// Create bot
@@ -102,57 +103,104 @@ func (bc *BotController) Stop() error {
 
 // run processes candles and executes strategy
 func (bc *BotController) run() {
-	// Get candles
+	log.Printf("Starting bot: symbol=%s, timeframe=%s, strategy=%s, replay=%v, speed=%v",
+		bc.symbol, bc.timeframe, bc.strategyName, bc.replayMode, bc.replaySpeed)
+
+	// 📊 STRICT HISTORICAL DATA LOADING
+	// We only use the local file provider. If data is missing, we FAIL.
 	candles, err := bc.provider.GetCandles(bc.symbol, bc.timeframe, 0)
-	if err != nil {
-		log.Printf("Error loading candles: %v", err)
-		bc.Stop()
+	if err != nil || len(candles) == 0 {
+		log.Printf("❌ CRITICAL ERROR: Could not load data for %s/%s. File not found in data/historical. Error: %v", bc.symbol, bc.timeframe, err)
+		bc.hub.BroadcastStatus("failed: data_missing")
+		bc.Stop() 
 		return
 	}
 
-	log.Printf("Processing %d candles for %s (%s)", len(candles), bc.symbol, bc.timeframe)
+	log.Printf("Loaded %d REAL candles - Ready for production research", len(candles))
 
-	// Process each candle
+	log.Printf("Replay speed: 1 candle every %v (streaming from data/historical)", bc.replaySpeed)
+
+	// Stream candles one-by-one like a real-time WebSocket feed
 	for i, candle := range candles {
+		// Check for stop signal
 		select {
 		case <-bc.stopChan:
+			log.Println("Bot stopped by user")
 			return
 		default:
 		}
 
-		// Broadcast candle
-		bc.hub.BroadcastCandle(candle, bc.symbol, string(bc.timeframe))
-
-		// Process candle (skip first 30 for MA warm-up)
+		// Process candle through bot strategy to get indicators
+		var indicators map[string]float64
 		if i >= 30 {
 			decision, err := bc.bot.ProcessCandle(candle)
 			if err != nil {
-				log.Printf("Error processing candle: %v", err)
-				continue
+				log.Printf("Error processing candle #%d: %v", i, err)
+			} else {
+				indicators = decision.Indicators
+				// Annotate indicators with signals for chart markers
+				switch decision.Signal {
+				case bot.SignalBuy:
+					indicators["signal"] = 1
+				case bot.SignalSell:
+					indicators["signal"] = -1
+				}
+
+				// Broadcast events to UI
+				bc.hub.BroadcastDecision(decision)
+
+				// Log significant trading decisions
+				if decision.Signal != "hold" {
+					log.Printf("🎯 SIGNAL #%d: %s at $%.2f | Confidence: %.0f%% | %s",
+						i, decision.Signal, decision.Price, decision.Confidence, decision.Reasoning)
+				}
+
+				// Update and broadcast position if trade was executed
+				if pos := bc.bot.GetPosition(); pos != nil {
+					bc.hub.BroadcastPosition(pos)
+					if decision.Signal == "buy" {
+						log.Printf("✅ Position OPENED: Entry $%.2f", pos.EntryPrice)
+					}
+				} else if decision.Signal == "sell" {
+					log.Printf("💰 Position CLOSED: P&L $%.2f", bc.bot.GetTotalPnL())
+				}
+
+				// Calculate and broadcast win rate
+				trades := bc.bot.GetTrades()
+				wins := 0
+				for _, t := range trades {
+					if t.RealizedPnL > 0 {
+						wins++
+					}
+				}
+				winRate := 0.0
+				if len(trades) > 0 {
+					winRate = (float64(wins) / float64(len(trades))) * 100
+				}
+
+				bc.hub.BroadcastPnL(websocket.PnLData{
+					Balance:  bc.bot.GetBalance(),
+					TotalPnL: bc.bot.GetTotalPnL(),
+					WinRate:  winRate,
+				})
 			}
-
-			// Broadcast decision
-			bc.hub.BroadcastDecision(decision)
-
-			// Broadcast position if exists
-			if pos := bc.bot.GetPosition(); pos != nil {
-				bc.hub.BroadcastPosition(pos)
-			}
-
-			// Broadcast PnL
-			bc.hub.BroadcastPnL(websocket.PnLData{
-				Balance:  bc.bot.GetBalance(),
-				TotalPnL: bc.bot.GetTotalPnL(),
-			})
 		}
 
-		// Simulate real-time delay in replay mode
+		// 🔴 Stream this candle to frontend with computed indicators
+		bc.hub.BroadcastCandle(candle, bc.symbol, string(bc.timeframe), indicators)
+
+		if i < 30 {
+			log.Printf("Warming up... %d/%d candles", i+1, 30)
+		}
+
+		// 🕐 Simulate real-time streaming delay
+		// This makes it feel like getting candles from a live exchange WebSocket
 		if bc.replayMode {
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(bc.replaySpeed)
 		}
 	}
 
-	log.Println("Finished processing all candles")
+	log.Printf("✅ Finished processing %d candles | Final P&L: $%.2f", len(candles), bc.bot.GetTotalPnL())
 	bc.Stop()
 }
 
@@ -167,6 +215,14 @@ func (bc *BotController) GetStatus() map[string]interface{} {
 		"timeframe":    bc.timeframe,
 		"strategy":     bc.strategyName,
 		"replay_mode":  bc.replayMode,
+		"replay_speed": bc.replaySpeed.Seconds(), // Speed in seconds
+		"dry_run":      bc.dryRun,
+	}
+
+	// Add wallet info in dry-run mode
+	if bc.dryRun {
+		status["wallet_balance"] = bc.wallet.GetBalance()
+		status["wallet_pnl"] = bc.wallet.GetTotalPnL()
 	}
 
 	if bc.bot != nil {
@@ -180,7 +236,7 @@ func (bc *BotController) GetStatus() map[string]interface{} {
 }
 
 // Configure updates bot configuration
-func (bc *BotController) Configure(symbol string, timeframe exchange.Timeframe, strategy string, replayMode bool) error {
+func (bc *BotController) Configure(symbol string, timeframe exchange.Timeframe, strategy string, replayMode, dryRun bool, replaySpeed float64) error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 
@@ -192,6 +248,14 @@ func (bc *BotController) Configure(symbol string, timeframe exchange.Timeframe, 
 	bc.timeframe = timeframe
 	bc.strategyName = strategy
 	bc.replayMode = replayMode
+	bc.dryRun = dryRun
+
+	// Set replay speed (default 1 second if not specified)
+	if replaySpeed > 0 {
+		bc.replaySpeed = time.Duration(replaySpeed * float64(time.Second))
+	} else {
+		bc.replaySpeed = 1 * time.Second
+	}
 
 	return nil
 }
@@ -248,10 +312,12 @@ func (bc *BotController) SetupRoutes(router *gin.Engine) {
 
 		api.POST("/configure", func(c *gin.Context) {
 			var req struct {
-				Symbol     string `json:"symbol" binding:"required"`
-				Timeframe  string `json:"timeframe" binding:"required"`
-				Strategy   string `json:"strategy" binding:"required"`
-				ReplayMode bool   `json:"replay_mode"`
+				Symbol      string  `json:"symbol" binding:"required"`
+				Timeframe   string  `json:"timeframe" binding:"required"`
+				Strategy    string  `json:"strategy" binding:"required"`
+				ReplayMode  bool    `json:"replay_mode"`
+				DryRun      bool    `json:"dry_run"`
+				ReplaySpeed float64 `json:"replay_speed"` // Seconds per candle (default 1.0)
 			}
 
 			if err := c.ShouldBindJSON(&req); err != nil {
@@ -265,7 +331,7 @@ func (bc *BotController) SetupRoutes(router *gin.Engine) {
 				return
 			}
 
-			if err := bc.Configure(req.Symbol, timeframe, req.Strategy, req.ReplayMode); err != nil {
+			if err := bc.Configure(req.Symbol, timeframe, req.Strategy, req.ReplayMode, req.DryRun, req.ReplaySpeed); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
@@ -283,6 +349,16 @@ func (bc *BotController) SetupRoutes(router *gin.Engine) {
 			}
 
 			c.JSON(http.StatusOK, gin.H{"trades": bc.bot.GetTrades()})
+		})
+	}
+	
+	// Strategy management endpoints
+	strategyRoutes := router.Group("/api/v1/strategies")
+	{
+		strategyRoutes.GET("", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"strategies": strategies.ListStrategies(),
+			})
 		})
 	}
 }

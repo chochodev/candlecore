@@ -4,15 +4,14 @@
 
 ### Target Markets
 
-- Crypto spot markets only (BTC/USDT, ETH/USDT)
+- Crypto spot markets only (BTC/USDT, ETH/USDT, etc)
 - No futures, options, or leveraged instruments
 - No stock or forex markets
-- Medium timeframes: 5m, 15m candles
 - Paper trading and backtesting only
 
 ### Data Sources
 
-- Free public APIs (Binance)
+- Free public APIs
 - Live 24/7 market data
 - No paid data feeds
 - No authentication required for public endpoints
@@ -30,7 +29,6 @@
 - Live exchange integration for order execution
 - Paid market data
 - Stock/forex markets
-- High-frequency trading
 
 ## Documentation Standards
 

@@ -221,3 +221,78 @@ func BollingerBands(values []float64, period int, stdDev float64) (*BollingerBan
 		Lower:  lower,
 	}, nil
 }
+
+// ATR calculates Average True Range
+func ATR(highs, lows, closes []float64, period int) ([]float64, error) {
+	if len(highs) != len(lows) || len(lows) != len(closes) {
+		return nil, fmt.Errorf("input slices must have equal length")
+	}
+	if len(closes) < period+1 {
+		return nil, fmt.Errorf("insufficient data for ATR")
+	}
+
+	tr := make([]float64, len(closes))
+	// TR = max(H-L, |H-Cp|, |L-Cp|)
+	for i := 1; i < len(closes); i++ {
+		h_l := highs[i] - lows[i]
+		h_cp := math.Abs(highs[i] - closes[i-1])
+		l_cp := math.Abs(lows[i] - closes[i-1])
+		tr[i] = math.Max(h_l, math.Max(h_cp, l_cp))
+	}
+
+	// First ATR is SMA of TR
+	atr, err := SMA(tr[1:], period)
+	if err != nil {
+		return nil, err
+	}
+
+	return atr, nil
+}
+
+// ADX calculates Average Directional Index
+func ADX(highs, lows, closes []float64, period int) ([]float64, error) {
+	if len(closes) < period*2 {
+		return nil, fmt.Errorf("insufficient data for ADX")
+	}
+
+	tr := make([]float64, len(closes))
+	plusDM := make([]float64, len(closes))
+	minusDM := make([]float64, len(closes))
+
+	for i := 1; i < len(closes); i++ {
+		h_l := highs[i] - lows[i]
+		h_cp := math.Abs(highs[i] - closes[i-1])
+		l_cp := math.Abs(lows[i] - closes[i-1])
+		tr[i] = math.Max(h_l, math.Max(h_cp, l_cp))
+
+		upMove := highs[i] - highs[i-1]
+		downMove := lows[i-1] - lows[i]
+
+		if upMove > downMove && upMove > 0 {
+			plusDM[i] = upMove
+		}
+		if downMove > upMove && downMove > 0 {
+			minusDM[i] = downMove
+		}
+	}
+
+	smoothTR, _ := EMA(tr[1:], period)
+	smoothPlusDM, _ := EMA(plusDM[1:], period)
+	smoothMinusDM, _ := EMA(minusDM[1:], period)
+
+	dx := make([]float64, len(smoothTR))
+	for i := range smoothTR {
+		plusDI := 100 * smoothPlusDM[i] / smoothTR[i]
+		minusDI := 100 * smoothMinusDM[i] / smoothTR[i]
+		dx[i] = 100 * math.Abs(plusDI-minusDI) / (plusDI + minusDI)
+	}
+
+	adx, err := SMA(dx, period)
+	if err != nil {
+		return nil, err
+	}
+
+	return adx, nil
+}
+
+
