@@ -3,7 +3,11 @@ package api
 import (
 	"candlecore/internal/exchange"
 	ws "candlecore/internal/websocket"
+	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -57,6 +61,9 @@ func (s *Server) setupRoutes() {
 		// Available symbols and timeframes
 		api.GET("/symbols", s.getSymbols)
 		api.GET("/timeframes", s.getTimeframes)
+
+		// Strategy Reports
+		api.GET("/strategies/reports", s.getStrategyReports)
 	}
 }
 
@@ -120,4 +127,32 @@ func (s *Server) healthCheck(c *gin.Context) {
 			"indicators",
 		},
 	})
+}
+// getStrategyReports returns all versioned reports from changelog/
+func (s *Server) getStrategyReports(c *gin.Context) {
+	changelogDir := "changelog"
+	files, err := os.ReadDir(changelogDir)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read reports directory"})
+		return
+	}
+
+	var reports []interface{}
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), ".json") {
+			continue
+		}
+
+		data, err := os.ReadFile(filepath.Join(changelogDir, file.Name()))
+		if err != nil {
+			continue
+		}
+
+		var report interface{}
+		if err := json.Unmarshal(data, &report); err == nil {
+			reports = append(reports, report)
+		}
+	}
+
+	c.JSON(http.StatusOK, reports)
 }

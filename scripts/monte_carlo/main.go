@@ -9,70 +9,75 @@ import (
 
 func main() {
 	symbols := []string{"btc", "eth", "sol"}
-	iterations := 10
-	days := 5
+	strategies := []string{"original", "ensemble", "fusion", "alpha_prime", "sol_sniper"}
+	iterations := 20
+	days := 7
 
-	fmt.Printf("🎲 Starting Monte Carlo: 10 random %d-day sessions for each symbol\n", days)
+	fmt.Printf("🎲 Starting Multi-Strategy Monte Carlo: %d iterations of %d days each\n", iterations, days)
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
-	// Set seed
-	rand.Seed(time.Now().UnixNano())
+	// Store results: map[strategy]map[symbol][]PnL
+	allResults := make(map[string]map[string][]float64)
+	for _, s := range strategies {
+		allResults[s] = make(map[string][]float64)
+	}
 
-	// Data ranges (CDD 1h)
-	// BTC/ETH: ~2017-08 to 2026-03
-	// SOL: ~2020-08 to 2026-03
-	
-	results := make(map[string][]float64)
-
+	// Pick windows ahead of time so all strategies face the same challenge
+	rand.Seed(42) // Constant seed for fair comparison
+	type window struct { symbol string; start time.Time; end time.Time }
+	windows := make([]window, 0)
 	for _, symbol := range symbols {
-		fmt.Printf("\n🚀 Testing %s:\n", symbol)
 		startYear := 2018
-		if symbol == "sol" {
-			startYear = 2021
-		}
-
+		if symbol == "sol" { startYear = 2021 }
 		for i := 0; i < iterations; i++ {
-			// Pick a random date
-			randomDate := pickRandomDate(startYear, 2025)
-			endBotDate := randomDate.AddDate(0, 0, days)
-			
-			startStr := randomDate.Format("2006-01-02")
-			endStr := endBotDate.Format("2006-01-02")
+			start := pickRandomDate(startYear, 2025)
+			windows = append(windows, window{symbol, start, start.AddDate(0, 0, days)})
+		}
+	}
 
-			fmt.Printf("   [%02d] %s to %s: ", i+1, startStr, endStr)
+	for _, strategy := range strategies {
+		fmt.Printf("\n🚀 Testing Strategy: %s\n", strategy)
+		for i, w := range windows {
+			startStr := w.start.Format("2006-01-02")
+			endStr := w.end.Format("2006-01-02")
+
+			if i % iterations == 0 { fmt.Printf("   [%s] Window Analysis Start\n", w.symbol) }
 			
-			// Run backtest command
 			cmd := exec.Command("go", "run", "cmd/candlecore/main.go", "backtest", 
-				"-s", symbol, 
-				"-t", "1h", 
-				"--start", startStr, 
-				"--end", endStr, 
-				"-b", "10.0")
+				"-s", w.symbol, "-t", "1h", "--start", startStr, "--end", endStr, 
+				"-b", "10.0", "--strategy", strategy)
 			
-			output, err := cmd.CombinedOutput()
-			if err != nil {
-				fmt.Printf("❌ Error: %v\n", err)
-				continue
+			output, _ := cmd.CombinedOutput()
+			outputStr := string(output)
+			pnlLine := grep(outputStr, "Total PnL")
+			pnl := 0.0
+			if pnlLine != "" {
+				parts := split(pnlLine, "(")
+				if len(parts) > 1 {
+					subParts := split(parts[1], "%")
+					if len(subParts) > 0 { fmt.Sscanf(subParts[0], "%f", &pnl) }
+				}
 			}
-
-			// Parse result (PnL) from output
-			pnl := extractPnL(string(output))
-			results[symbol] = append(results[symbol], pnl)
-			fmt.Printf("%.2f%%\n", pnl)
+			allResults[strategy][w.symbol] = append(allResults[strategy][w.symbol], pnl)
 		}
 	}
 
 	fmt.Println("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	fmt.Println("📊 30-Session Summary (Risking $10 each):")
-	for symbol, pnls := range results {
-		avg := 0.0
-		wins := 0
-		for _, v := range pnls {
-			avg += v
-			if v > 0 { wins++ }
+	fmt.Println("🏆 FINAL MONTE CARLO SHOOTOUT (240 SESSIONS)")
+	fmt.Println("Strategy       | Symbol | Avg PnL% | Success Rate")
+	fmt.Println("━━━━━━━━━━━━━━━|━━━━━━━━|━━━━━━━━━━|━━━━━━━━━━━━━")
+	for _, s := range strategies {
+		for _, sym := range symbols {
+			pnls := allResults[s][sym]
+			avg, wins := 0.0, 0
+			for _, v := range pnls {
+				avg += v
+				if v > 0 { wins++ }
+			}
+			avg /= float64(len(pnls))
+			fmt.Printf("%-15s| %-7s| %-+8.2f%% | %d/%d\n", s, sym, avg, wins, iterations)
 		}
-		avg /= float64(len(pnls))
-		fmt.Printf("   %s: Avg PnL: %+.2f%% | Success Rate: %d/%d\n", symbol, avg, wins, iterations)
+		fmt.Println("---------------|--------|----------|-------------")
 	}
 }
 
@@ -84,34 +89,37 @@ func pickRandomDate(startYear, endYear int) time.Time {
 	return time.Unix(sec, 0).UTC()
 }
 
-func extractPnL(output string) float64 {
-	// Crude but fast: look for PnL string
-	// Format: "Total PnL: $0.04 (0.40%)"
-	var pnl float64
-	fmt.Sscanf(grep(output, "Total PnL"), "📈 Total PnL: $%f (%f%%)", &pnl, &pnl)
-	return pnl
-}
-
 func grep(input, search string) string {
-	// Helper to find a line containing search string
 	lines := splitLines(input)
 	for _, line := range lines {
-		if contains(line, search) {
-			return line
-		}
+		if contains(line, search) { return line }
 	}
 	return ""
+}
+
+func split(s, sep string) []string {
+	var parts []string
+	start := 0
+	for i := 0; i <= len(s)-len(sep); i++ {
+		if s[i:i+len(sep)] == sep {
+			parts = append(parts, s[start:i])
+			start = i + len(sep)
+		}
+	}
+	parts = append(parts, s[start:])
+	return parts
 }
 
 func splitLines(s string) []string {
 	var lines []string
 	start := 0
 	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' {
-			lines = append(lines, s[start:i])
+		if s[i] == '\n' || s[i] == '\r' {
+			if start < i { lines = append(lines, s[start:i]) }
 			start = i + 1
 		}
 	}
+	if start < len(s) { lines = append(lines, s[start:]) }
 	return lines
 }
 
@@ -121,9 +129,7 @@ func contains(s, search string) bool {
 
 func find(s, search string) int {
 	for i := 0; i <= len(s)-len(search); i++ {
-		if s[i:i+len(search)] == search {
-			return i
-		}
+		if s[i:i+len(search)] == search { return i }
 	}
 	return -1
 }

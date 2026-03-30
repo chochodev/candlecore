@@ -295,4 +295,59 @@ func ADX(highs, lows, closes []float64, period int) ([]float64, error) {
 	return adx, nil
 }
 
+// FisherTransform calculates Fisher Transform
+func FisherTransform(highs, lows []float64, period int) ([]float64, error) {
+	if len(highs) < period {
+		return nil, fmt.Errorf("insufficient data for Fisher Transform")
+	}
+
+	result := make([]float64, len(highs))
+	value := 0.0
+	fisher := 0.0
+
+	for i := period - 1; i < len(highs); i++ {
+		hh := highs[i]
+		ll := lows[i]
+		for j := i - period + 1; j < i; j++ {
+			if highs[j] > hh { hh = highs[j] }
+			if lows[j] < ll { ll = lows[j] }
+		}
+
+		price := (highs[i] + lows[i]) / 2.0
+		val := 0.0
+		if hh != ll {
+			val = 0.33 * 2 * ((price - ll) / (hh - ll) - 0.5) + 0.67 * value
+		}
+		value = val
+		
+		if value > 0.999 { value = 0.999 }
+		if value < -0.999 { value = -0.999 }
+
+		fisher = 0.5 * math.Log((1+value)/(1-value)) + 0.5 * fisher
+		result[i] = fisher
+	}
+
+	return result[period-1:], nil
+}
+
+// TRIX calculates Triple Exponentially Smoothed Moving Average
+func TRIX(values []float64, period int) ([]float64, error) {
+	if len(values) < period*3 {
+		return nil, fmt.Errorf("insufficient data for TRIX")
+	}
+
+	ema1, _ := EMA(values, period)
+	ema2, _ := EMA(ema1, period)
+	ema3, _ := EMA(ema2, period)
+
+	result := make([]float64, len(ema3))
+	for i := 1; i < len(ema3); i++ {
+		if ema3[i-1] != 0 {
+			result[i] = (ema3[i] - ema3[i-1]) / ema3[i-1]
+		}
+	}
+
+	return result[1:], nil
+}
+
 

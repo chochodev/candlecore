@@ -5,7 +5,7 @@
 ### Start Server
 
 ```bash
-./candlecore serve --port 8080
+go run ./cmd/candlecore serve
 ```
 
 ### Help

@@ -5,7 +5,6 @@ import (
 	"candlecore/internal/exchange"
 	"candlecore/internal/strategies"
 	"candlecore/internal/strategy"
-	_ "candlecore/internal/strategy"
 	"encoding/csv"
 	"fmt"
 	"os"

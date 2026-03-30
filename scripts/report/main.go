@@ -24,8 +24,8 @@ type VersionReport struct {
 func main() {
 	dataDir := "data/historical"
 	changelogDir := "changelog"
-	version := "1.0.3"
-	strategyName := "ensemble"
+	version := "1.0.7"
+	strategyName := "alpha_prime"
 
 	if err := os.MkdirAll(changelogDir, 0755); err != nil {
 		log.Fatal(err)
@@ -39,7 +39,7 @@ func main() {
 	report := &VersionReport{
 		Version:     version,
 		Timestamp:   time.Now(),
-		Description: "Final Hybrid Ensemble (v1.0.3): Simultaneous Bollinger Breakout and MA Momentum. Incorporates concurrent entry signals and strict mid-band exit logic for optimal safety.",
+		Description: "Alpha Prime (v1.0.7): High-Conviction SMA 12/26 Hybrid optimized for crypto momentum. Anchored to v1.0.0's 83% PnL logic with modern re-entry and profit-take guards.",
 		Benchmarks:  make([]*engine.BacktestReport, 0),
 	}
 

@@ -49,16 +49,16 @@ func (s *MACrossoverStrategy) PopulateIndicators(df *DataFrame) error {
 	f, _ := indicators.SMA(closes, s.FastPeriod)
 	sP, _ := indicators.SMA(closes, s.SlowPeriod)
 
-	df.Indicators["sma_f"] = pad(f, len(df.Candles))
-	df.Indicators["sma_s"] = pad(sP, len(df.Candles))
+	df.Indicators["sma_f"] = Pad(f, len(df.Candles))
+	df.Indicators["sma_s"] = Pad(sP, len(df.Candles))
 	return nil
 }
 
 func (s *MACrossoverStrategy) PopulateEntrySignal(df *DataFrame, current Candle) Signal {
-	f := getVal(df, "sma_f")
-	sP := getVal(df, "sma_s")
-	pf := getPrev(df, "sma_f")
-	ps := getPrev(df, "sma_s")
+	f := GetVal(df, "sma_f")
+	sP := GetVal(df, "sma_s")
+	pf := GetPrev(df, "sma_f")
+	ps := GetPrev(df, "sma_s")
 
 	// Same entry logic as v1.0.0
 	if pf <= ps && f > sP {
@@ -79,10 +79,10 @@ func (s *MACrossoverStrategy) PopulateExitSignal(df *DataFrame, current Candle, 
 		return Signal{Action: "sell", Reason: "Enforced Stop Loss (3%)", Price: current.Close}
 	}
 
-	f := getVal(df, "sma_f")
-	sP := getVal(df, "sma_s")
-	pf := getPrev(df, "sma_f")
-	ps := getPrev(df, "sma_s")
+	f := GetVal(df, "sma_f")
+	sP := GetVal(df, "sma_s")
+	pf := GetPrev(df, "sma_f")
+	ps := GetPrev(df, "sma_s")
 
 	// Standard technical exit
 	if pf >= ps && f < sP {

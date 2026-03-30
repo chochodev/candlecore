@@ -18,7 +18,7 @@ func NewEnsemble() IStrategy {
 			Name:    "Hybrid Alpha",
 			Version: "1.0.3",
 			Config: StrategyConfig{
-				Stoploss:      -0.03, // 3% Protective
+				Stoploss:      -0.05, // 5% Protective
 				StakeAmount:   100.0,
 				MaxOpenTrades: 5,
 				Timeframe:     "1h",
@@ -41,90 +41,83 @@ func init() {
 
 func (s *EnsembleStrategy) PopulateIndicators(df *DataFrame) error {
 	if len(df.Candles) < 50 {
-		return fmt.Errorf("insufficient data for 1.0.3: need 50 candles")
+		return fmt.Errorf("insufficient data for v1.0.3: need 50 candles")
 	}
 	if df.Indicators == nil { df.Indicators = make(map[string][]float64) }
 
-	closes := extractCloses(df.Candles)
-	highs, lows := extractHighs(df.Candles), extractLows(df.Candles)
+	closes := ExtractCloses(df.Candles)
 
-	ema9, _ := indicators.EMA(closes, s.FastPeriod)
-	ema21, _ := indicators.EMA(closes, s.SlowPeriod)
-	ema50, _ := indicators.EMA(closes, s.TrendPeriod)
-	df.Indicators["ema_f"] = pad(ema9, len(df.Candles))
-	df.Indicators["ema_s"] = pad(ema21, len(df.Candles))
-	df.Indicators["ema_t"] = pad(ema50, len(df.Candles))
-	df.Indicators["close"] = closes
+	ema9, _ := indicators.EMA(closes, 9)
+	ema21, _ := indicators.EMA(closes, 21)
+	ema50, _ := indicators.EMA(closes, 50)
+	
+	df.Indicators["ema_f"] = Pad(ema9, len(df.Candles))
+	df.Indicators["ema_s"] = Pad(ema21, len(df.Candles))
+	df.Indicators["ema_50"] = Pad(ema50, len(df.Candles))
 
-	bb, _ := indicators.BollingerBands(closes, 20, 2.0)
-	df.Indicators["bb_upper"] = pad(bb.Upper, len(df.Candles))
-	df.Indicators["bb_middle"] = pad(bb.Middle, len(df.Candles))
-	df.Indicators["bb_lower"] = pad(bb.Lower, len(df.Candles))
+	resBB, _ := indicators.BollingerBands(closes, 20, 2.0)
+	df.Indicators["bb_upper"] = Pad(resBB.Upper, len(df.Candles))
+	df.Indicators["bb_middle"] = Pad(resBB.Middle, len(df.Candles))
+	df.Indicators["bb_lower"] = Pad(resBB.Lower, len(df.Candles))
 
-	adx, _ := indicators.ADX(highs, lows, closes, 14)
-	df.Indicators["adx"] = pad(adx, len(df.Candles))
+	// BandWidth calculation
+	width := make([]float64, len(resBB.Middle))
+	for i := 0; i < len(resBB.Middle); i++ {
+		width[i] = (resBB.Upper[i] - resBB.Lower[i]) / resBB.Middle[i]
+	}
+	df.Indicators["bb_width"] = Pad(width, len(df.Candles))
 
 	return nil
 }
 
 func (s *EnsembleStrategy) PopulateEntrySignal(df *DataFrame, current Candle) Signal {
-	adx := getVal(df, "adx")
-	ema9 := getVal(df, "ema_f")
-	ema21 := getVal(df, "ema_s")
-	ema50 := getVal(df, "ema_t")
-	prevEma50 := getPrev(df, "ema_t")
-	upper := getVal(df, "bb_upper")
-	lower := getVal(df, "bb_lower")
-	middle := getVal(df, "bb_middle")
+	width := GetVal(df, "bb_width")
+	prevWidth := GetPrev(df, "bb_width")
+	ema9 := GetVal(df, "ema_f")
+	ema21 := GetVal(df, "ema_s")
+	ema50 := GetVal(df, "ema_50")
 
-	// 🛡️ CRASH GUARD 1: Trend Health (Slope check)
-	if current.Close < ema50 || ema50 < prevEma50 {
-		return Signal{Action: "hold", Reason: "Bearish bias or Negative Slope"}
-	}
+	// Filter 1: Trend Health (EMA 50 Slope)
+	isTrendRising := ema50 > GetPrev(df, "ema_50")
 
-	// 🛡️ CRASH GUARD 2: Overextension Check (BandWidth ceiling 65%)
-	bw := (upper - lower) / middle
-	if bw > 0.65 {
-		return Signal{Action: "hold", Reason: "Market hyper-extended"}
-	}
+	// Filter 2: Volatility Ceiling (Avoid 'Blow-off' tops)
+	isVolatilitySafe := width < 0.65 
 
-	bbBreakout := current.Close > upper && getPrev(df, "bb_upper") > 0
-	maCross := ema9 > ema21 && getPrev(df, "ema_f") <= getPrev(df, "ema_s")
+	// Filter 3: Squeeze Breakout (Bollinger Squeeze)
+	isSqueezeBreaking := width > prevWidth && GetPrev(df, "bb_width") < GetPrevVal(df, "bb_width", 5)
 
-	if (bbBreakout || maCross) && adx < 55 {
+	if isTrendRising && isVolatilitySafe && isSqueezeBreaking && ema9 > ema21 {
 		return Signal{
-			Action: "buy", Price: current.Close, Reason: "Hybrid Entry (v1.0.3)",
+			Action: "buy", Price: current.Close, Reason: "Squeeze Breakout (v1.0.3 Optimized)",
 		}
 	}
 	return Signal{Action: "hold"}
 }
 
 func (s *EnsembleStrategy) PopulateExitSignal(df *DataFrame, current Candle, position Position) Signal {
-	middle := getVal(df, "bb_middle")
-	ema9 := getVal(df, "ema_f")
-	ema21 := getVal(df, "ema_s")
-	prevClose := getPrev(df, "close")
+	middle := GetVal(df, "bb_middle")
+	ema9 := GetVal(df, "ema_f")
+	ema21 := GetVal(df, "ema_s")
 
-	// 🛡️ CRASH GUARD 3: 1.5% Hourly Emergency Exit
-	hourlyDrop := (current.Close - prevClose) / prevClose
-	if hourlyDrop <= -0.015 {
-		return Signal{Action: "sell", Price: current.Close, Reason: "Emergency Hourly Stop"}
-	}
-
+	// Hard Stop-loss check (already handled by engine but good for signal reason)
 	profitPct := (current.Close - position.EntryPrice) / position.EntryPrice
 	if profitPct <= s.Config.Stoploss {
-		return Signal{Action: "sell", Reason: "Hard Stop", Price: current.Close}
+		return Signal{Action: "sell", Price: current.Close, Reason: "Hard Stoploss"}
 	}
 
-	// Loosened 2-candle confirmation for standard exhaustions
-	prevMid := getPrev(df, "bb_middle")
-	isBBMidBreak := current.Close < middle && prevClose < prevMid && prevMid > 0
-	isMACrossDown := ema9 < ema21 && getPrev(df, "ema_f") < getPrev(df, "ema_s")
-
-	if isBBMidBreak || isMACrossDown {
-		return Signal{
-			Action: "sell", Price: current.Close, Reason: "Confirmed Exhaustion (v1.0.3)",
-		}
+	// Momentum Exit: EMA cross down
+	if ema9 < ema21 && GetPrev(df, "ema_f") >= GetPrev(df, "ema_s") {
+		return Signal{Action: "sell", Price: current.Close, Reason: "Momentum Loss"}
 	}
+	
+	// Trend Exit: Price below BB Middle for 2 consecutive candles
+	if current.Close < middle && GetPrev(df, "close") < GetPrev(df, "bb_middle") {
+		return Signal{Action: "sell", Price: current.Close, Reason: "Trend Breakout"}
+	}
+	
 	return Signal{Action: "hold"}
+}
+
+func (s *EnsembleStrategy) CustomStoploss(current Candle, position Position, currentProfit float64) *float64 {
+	return nil // Use fixed SL
 }

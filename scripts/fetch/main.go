@@ -12,7 +12,7 @@ import (
 
 // Config
 var symbols = []string{"BTC", "ETH", "SOL"}
-var timeframes = []string{"d", "1h"}
+var timeframes = []string{"d", "1h", "15m"}
 
 func main() {
 	fmt.Println("🚀 Candlecore Historical Data Fetcher")
@@ -23,10 +23,8 @@ func main() {
 			tempFile := fmt.Sprintf("data/historical/temp_%s_%s.csv", symbol, tf)
 			
 			// Set target filename
-			suffix := "1d"
-			if tf == "1h" {
-				suffix = "1h"
-			}
+			suffix := tf
+			if tf == "d" { suffix = "1d" }
 			targetFile := fmt.Sprintf("data/historical/%s_%s.csv", strings.ToLower(symbol), suffix)
 
 			fmt.Printf("📥 Downloading %s (%s)... ", symbol, tf)
