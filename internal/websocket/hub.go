@@ -20,6 +20,7 @@ const (
 	EventTypePosition EventType = "position"
 	EventTypePnL      EventType = "pnl"
 	EventTypeStatus   EventType = "status"
+	EventTypeHistory  EventType = "history"
 )
 
 // Event represents a WebSocket event
@@ -155,6 +156,15 @@ func (h *Hub) BroadcastStatus(status string) {
 		Type:      EventTypeStatus,
 		Timestamp: time.Now(),
 		Data:      map[string]string{"status": status},
+	}
+}
+
+// BroadcastHistory broadcasts a batch of historical candles
+func (h *Hub) BroadcastHistory(candles []CandleData) {
+	h.broadcast <- Event{
+		Type:      EventTypeHistory,
+		Timestamp: time.Now(),
+		Data:      candles,
 	}
 }
 

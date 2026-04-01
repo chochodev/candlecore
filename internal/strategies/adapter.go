@@ -74,7 +74,7 @@ func (a *StrategyAdapter) Analyze(candles []exchange.Candle, currentPos *bot.Pos
 		Signal:     bot.Signal(signal.Action),
 		Symbol:     "", // Will be filled by bot
 		Price:      signal.Price,
-		Quantity:   0, // Will be calculated by bot
+		Quantity:   signal.Quantity,
 		Confidence: float64(signal.Confidence),
 		Reasoning:  signal.Reason,
 		Indicators: make(map[string]float64),

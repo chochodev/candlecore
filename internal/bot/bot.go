@@ -158,7 +158,11 @@ func (b *Bot) executeDecision(decision *Decision, candle exchange.Candle) {
 		}
 	case SignalSell:
 		if b.position != nil && b.position.Side == "long" {
-			b.closePosition(candle.Close)
+			if decision.Quantity > 0 && decision.Quantity < b.position.Quantity {
+				b.partialClose(candle.Close, decision.Quantity)
+			} else {
+				b.closePosition(candle.Close)
+			}
 		}
 	case SignalHold:
 		// Update unrealized PnL if position exists
@@ -175,16 +179,21 @@ func (b *Bot) enterPosition(side string, price float64, decision *Decision) {
 		b.closePosition(price)
 	}
 
+	// Calculate slippage (0.05% typically for high-liquidity pairs)
+	slippedPrice := price * 1.0005 
+
 	// Calculate position size (use 10% of balance for simplicity)
-	quantity := (b.balance * 0.1) / price
+	quantity := (b.balance * 0.1) / slippedPrice
+	fee := (quantity * slippedPrice) * 0.001 // 0.1% Taker Fee
+	b.balance -= fee
 
 	b.position = &Position{
 		ID:         b.generateID(),
 		Symbol:     b.symbol,
 		Side:       side,
-		EntryPrice: price,
+		EntryPrice: slippedPrice,
 		Quantity:   quantity,
-		CurrentPrice: price,
+		CurrentPrice: slippedPrice,
 		UnrealizedPnL: 0,
 		OpenedAt:   decision.Timestamp,
 	}
@@ -196,27 +205,63 @@ func (b *Bot) closePosition(price float64) {
 		return
 	}
 
+	slippedPrice := price * 0.9995
+
 	// Calculate PnL
 	var pnl float64
 	if b.position.Side == "long" {
-		pnl = (price - b.position.EntryPrice) * b.position.Quantity
+		pnl = (slippedPrice - b.position.EntryPrice) * b.position.Quantity
 	} else {
-		pnl = (b.position.EntryPrice - price) * b.position.Quantity
+		pnl = (b.position.EntryPrice - slippedPrice) * b.position.Quantity
 	}
 
-	b.position.CurrentPrice = price
+	b.position.CurrentPrice = slippedPrice
 	b.position.RealizedPnL = pnl
 	now := time.Now()
 	b.position.ClosedAt = &now
 
 	// Update balance
-	b.balance += pnl
+	exitFee := (b.position.Quantity * slippedPrice) * 0.001
+	b.balance += pnl - exitFee
 
 	// Store trade
-	b.trades = append(b.trades, *b.position)
+	trade := *b.position
+	trade.RealizedPnL -= exitFee
+	b.trades = append(b.trades, trade)
 
 	// Clear position
 	b.position = nil
+}
+
+// partialClose closes a portion of the current position
+func (b *Bot) partialClose(price, quantity float64) {
+	if b.position == nil || quantity <= 0 || quantity >= b.position.Quantity {
+		return
+	}
+
+	// Calculate PnL for the sold portion
+	var pnl float64
+	if b.position.Side == "long" {
+		pnl = (price - b.position.EntryPrice) * quantity
+	} else {
+		pnl = (b.position.EntryPrice - price) * quantity
+	}
+
+	// Record the partial trade
+	partialTrade := *b.position
+	partialTrade.Quantity = quantity
+	partialTrade.RealizedPnL = pnl
+	partialTrade.CurrentPrice = price
+	now := time.Now()
+	partialTrade.ClosedAt = &now
+	b.trades = append(b.trades, partialTrade)
+
+	// Update remaining position and balance
+	b.position.Quantity -= quantity
+	b.balance += (price * quantity) // Simplified: adding proceeds to balance
+	
+	// Note: We don't update entry price for partial sells, 
+	// but we could adjust it if it were a partial buy (DCA).
 }
 
 // updatePosition updates unrealized PnL

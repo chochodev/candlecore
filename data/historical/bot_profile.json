@@ -1,0 +1,10 @@
+{
+  "symbol": "sol",
+  "timeframe": "1h",
+  "strategy": "ma_crossover",
+  "replay_mode": true,
+  "dry_run": true,
+  "replay_speed": 1,
+  "parameters": null,
+  "is_running": false
+}

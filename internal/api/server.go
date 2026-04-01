@@ -2,6 +2,7 @@ package api
 
 import (
 	"candlecore/internal/exchange"
+	"candlecore/internal/strategies"
 	ws "candlecore/internal/websocket"
 	"encoding/json"
 	"net/http"
@@ -36,7 +37,7 @@ func NewServer(dataDir string) *Server {
 	provider := exchange.NewLocalFileProvider(dataDir)
 	
 	// Create bot controller
-	controller := NewBotController(provider, hub)
+	controller := NewBotController(provider, hub, dataDir)
 	
 	s := &Server{
 		router:     router,
@@ -64,6 +65,13 @@ func (s *Server) setupRoutes() {
 
 		// Strategy Reports
 		api.GET("/strategies/reports", s.getStrategyReports)
+
+		// Available Strategies
+		api.GET("/strategies", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"strategies": strategies.ListStrategies(),
+			})
+		})
 	}
 }
 

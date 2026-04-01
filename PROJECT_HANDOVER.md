@@ -14,6 +14,9 @@ We maintain a strict 3-version ecosystem to enable data-driven performance compa
   - **The Triple Guard**: EMA 50 Slope filter (Trend Health), 65% BandWidth Ceiling (Volatility Protection), and 1.5% Hourly Emergency Stop (Flash Crash Fail-safe).
 - **v1.0.7 (The Alpha Prime)**: SMA 12/26 Optimized Champion.
   - **The Apex Logic**: Re-entry on pullback + EMA 8 Fast-Exit. Beats baseline by 20% alpha on ETH/SOL.
+- **v1.1.0 (The Pulse Scalper)**: High-Frequency 15m Scalper.
+  - **The Pulse Logic**: EMA 9/21 Momentum + RSI Filter. 
+  - **Proactive Scaling**: Stage 1 TP at +0.8% (Sells 50%) + Stage 2 Safety Lock (Break-even).
 - **v1.0.8 (The Solana Sniper)**: High-Frequency Asset-Specific Variant.
   - **The Pulse Engine**: 5/13 EMA cross + ADX 25 Trend filter. Tuned specifically for Solana's parabolic frequency. Handles "Multi-Variant" concurrency in Go.
 
@@ -60,7 +63,8 @@ Performance metrics are generated through a two-stage process:
 
 ## 7. Tactical Memory Map (Quick Reference)
 Use this map to orient yourself instantly upon state initialization:
-- **Market Data Flow**: `data/historical/*.parquet` -> `internal/strategy/engine.go` -> `internal/api/websocket.go` -> `Dashboard.tsx`.
+- **Market Data Flow**: `data/historical/*.csv` -> `internal/bot/bot.go` -> `internal/strategies/pulse_scalper.go`.
+- **Pulse Engine**: `v1.1.0` logic handles partial profit-taking (scaling out) at +0.8% to guarantee 'Infinite' free trades on the remaining 50%.
 - **Analytics Flow**: `go logic` -> `changelog/*.json` -> `scripts/shootout/main.go` -> `StrategyLab.tsx`.
 - **Command Control**: `Header.tsx` (Nav) -> `App.tsx` (Routes) -> `StrategyLab.tsx` (Management).
 

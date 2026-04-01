@@ -26,6 +26,7 @@ type Signal struct {
 	Confidence int     // 0-100%
 	Reason     string  // Human-readable explanation
 	Price      float64 // Suggested entry/exit price
+	Quantity   float64 // For partial exits (0.0 means full position)
 }
 
 // Position represents current open trade

@@ -19,7 +19,7 @@ go.work
 .state/*.json
 
 # Data files (but allow README)
-data/*
+# data/*
 !data/README.md
 *.csv
 
