@@ -27,6 +27,7 @@ type Signal struct {
 	Reason     string  // Human-readable explanation
 	Price      float64 // Suggested entry/exit price
 	Quantity   float64 // For partial exits (0.0 means full position)
+	TrailingSL *float64 // For dynamic stop-loss updates
 }
 
 // Position represents current open trade
@@ -37,6 +38,7 @@ type Position struct {
 	Size       float64   // Position size
 	StopLoss   float64   // Current stoploss price
 	TakeProfit float64   // Current take profit price
+	TrailingSL *float64   // Current dynamic trailing SL (if any)
 }
 
 // StrategyConfig holds strategy parameters

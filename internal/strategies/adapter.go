@@ -4,7 +4,6 @@ import (
 	"candlecore/internal/bot"
 	"candlecore/internal/exchange"
 	"candlecore/internal/strategy"
-	"time"
 )
 
 // StrategyAdapter adapts new strategy.IStrategy to old bot.Strategy interface
@@ -62,6 +61,7 @@ func (a *StrategyAdapter) Analyze(candles []exchange.Candle, currentPos *bot.Pos
 			EntryPrice: currentPos.EntryPrice,
 			EntryTime:  currentPos.OpenedAt,
 			Size:       currentPos.Quantity,
+			TrailingSL: currentPos.TrailingSL, // 🚀 Sync engine state back to strategy
 		}
 		signal = a.strategy.PopulateExitSignal(df, current, stratPos)
 	} else {
@@ -70,7 +70,7 @@ func (a *StrategyAdapter) Analyze(candles []exchange.Candle, currentPos *bot.Pos
 	
 	// Convert strategy.Signal to bot.Decision
 	decision := &bot.Decision{
-		Timestamp:  time.Now(),
+		Timestamp:  current.Timestamp,
 		Signal:     bot.Signal(signal.Action),
 		Symbol:     "", // Will be filled by bot
 		Price:      signal.Price,
@@ -78,6 +78,7 @@ func (a *StrategyAdapter) Analyze(candles []exchange.Candle, currentPos *bot.Pos
 		Confidence: float64(signal.Confidence),
 		Reasoning:  signal.Reason,
 		Indicators: make(map[string]float64),
+		TrailingSL: signal.TrailingSL, // 🚀 Sync Profit Lock
 	}
 
 	// Copy indicators to decision

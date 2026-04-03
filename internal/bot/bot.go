@@ -24,6 +24,7 @@ type Decision struct {
 	Confidence float64           `json:"confidence"` // 0-100
 	Reasoning  string            `json:"reasoning"`
 	Indicators map[string]float64 `json:"indicators"` // indicator values at decision time
+	TrailingSL *float64           `json:"trailing_sl,omitempty"` // Propagated from strategy
 }
 
 // Position represents an open position
@@ -38,6 +39,7 @@ type Position struct {
 	RealizedPnL   float64 `json:"realized_pnl"`
 	OpenedAt   time.Time `json:"opened_at"`
 	ClosedAt   *time.Time `json:"closed_at,omitempty"`
+	TrailingSL *float64   `json:"trailing_sl,omitempty"` // For the dynamic SL line
 }
 
 // Strategy defines the interface for trading strategies
@@ -63,6 +65,7 @@ type Bot struct {
 	initialBalance float64
 	trades         []Position
 	balanceHistory []float64
+	history        []exchange.Candle
 }
 
 // Config contains bot configuration
@@ -84,19 +87,29 @@ func NewBot(strategy Strategy, provider exchange.DataProvider, config Config) *B
 		initialBalance: config.InitialBalance,
 		trades:         make([]Position, 0),
 		balanceHistory: []float64{config.InitialBalance},
+		history:        make([]exchange.Candle, 0),
 	}
 }
 
 // ProcessCandle processes a new candle and executes strategy
 func (b *Bot) ProcessCandle(candle exchange.Candle) (*Decision, error) {
-	// Get recent candles for analysis
-	candles, err := b.provider.GetCandles(b.symbol, b.timeframe, 200)
-	if err != nil {
-		return nil, err
+	// Maintain internal sliding window of history
+	b.history = append(b.history, candle)
+	if len(b.history) > 300 {
+		b.history = b.history[1:]
 	}
 
-	// Run strategy analysis
-	decision, err := b.strategy.Analyze(candles, b.position)
+	// Warm-up check (need enough data for indicators)
+	if len(b.history) < 30 {
+		return &Decision{
+			Timestamp: candle.Timestamp,
+			Signal:    SignalHold,
+			Reasoning: "Engine warming up...",
+		}, nil
+	}
+
+	// Run strategy analysis on the actual historical context
+	decision, err := b.strategy.Analyze(b.history, b.position)
 	if err != nil {
 		return nil, err
 	}
@@ -151,21 +164,34 @@ func (b *Bot) GetBalanceHistory() []float64 {
 
 // executeDecision executes a trading decision
 func (b *Bot) executeDecision(decision *Decision, candle exchange.Candle) {
+	// 1. Sync TrailingSL from decision to current position
+	if b.position != nil && decision.TrailingSL != nil {
+		b.position.TrailingSL = decision.TrailingSL
+	}
+
 	switch decision.Signal {
 	case SignalBuy:
-		if b.position == nil || b.position.Side == "short" {
+		if b.position == nil {
+			b.enterPosition("long", candle.Close, decision)
+		} else if b.position.Side == "short" {
+			b.closePosition(candle.Close)
 			b.enterPosition("long", candle.Close, decision)
 		}
 	case SignalSell:
-		if b.position != nil && b.position.Side == "long" {
+		if b.position == nil {
+			b.enterPosition("short", candle.Close, decision)
+		} else if b.position.Side == "long" {
+			// Handle partial sell (like Fee Shield)
 			if decision.Quantity > 0 && decision.Quantity < b.position.Quantity {
 				b.partialClose(candle.Close, decision.Quantity)
 			} else {
 				b.closePosition(candle.Close)
+				// Only open short if it's explicitly a short entry, not just an exit
+				// For the Pulse Scalper, Sell signal at entry means Short
+				b.enterPosition("short", candle.Close, decision)
 			}
 		}
 	case SignalHold:
-		// Update unrealized PnL if position exists
 		if b.position != nil {
 			b.updatePosition(candle.Close)
 		}
