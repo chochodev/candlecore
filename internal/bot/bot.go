@@ -39,6 +39,8 @@ type Position struct {
 	RealizedPnL   float64 `json:"realized_pnl"`
 	OpenedAt   time.Time `json:"opened_at"`
 	ClosedAt   *time.Time `json:"closed_at,omitempty"`
+	StopLoss   float64   `json:"stop_loss"`
+	TakeProfit float64   `json:"take_profit"`
 	TrailingSL *float64   `json:"trailing_sl,omitempty"` // For the dynamic SL line
 }
 
@@ -147,9 +149,37 @@ func (b *Bot) RunBacktest(candles []exchange.Candle) error {
 		// Record balance for drawdown/sharpe
 		currBalance := b.balance
 		if b.position != nil {
-			// Update unrealized PnL first
-			b.updatePosition(candle.Close)
-			currBalance += b.position.UnrealizedPnL
+			// 🛡️ AUTONOMOUS RISK GUARD: Check intra-candle TP/SL hits
+			// Long Exit Check
+			if b.position.Side == "long" {
+				// Check Stop Loss (Trailing if exists, else original)
+				slPrice := b.position.StopLoss
+				if b.position.TrailingSL != nil {
+					slPrice = *b.position.TrailingSL
+				}
+				if candle.Low <= slPrice {
+					b.closePosition(slPrice)
+				} else if candle.High >= b.position.TakeProfit {
+					b.closePosition(b.position.TakeProfit)
+				}
+			} else if b.position.Side == "short" {
+				// Short Exit Check
+				slPrice := b.position.StopLoss
+				if b.position.TrailingSL != nil {
+					slPrice = *b.position.TrailingSL
+				}
+				if candle.High >= slPrice {
+					b.closePosition(slPrice)
+				} else if candle.Low <= b.position.TakeProfit {
+					b.closePosition(b.position.TakeProfit)
+				}
+			}
+
+			// If position still exists, update normal PnL
+			if b.position != nil {
+				b.updatePosition(candle.Close)
+				currBalance += b.position.UnrealizedPnL
+			}
 		}
 		b.balanceHistory = append(b.balanceHistory, currBalance)
 	}
@@ -175,20 +205,23 @@ func (b *Bot) executeDecision(decision *Decision, candle exchange.Candle) {
 			b.enterPosition("long", candle.Close, decision)
 		} else if b.position.Side == "short" {
 			b.closePosition(candle.Close)
-			b.enterPosition("long", candle.Close, decision)
+			// Only re-enter Long if it's an explicit entry reasoning
+			if decision.Reasoning == "Pulse Entry (Long)" {
+				b.enterPosition("long", candle.Close, decision)
+			}
 		}
 	case SignalSell:
 		if b.position == nil {
 			b.enterPosition("short", candle.Close, decision)
 		} else if b.position.Side == "long" {
-			// Handle partial sell (like Fee Shield)
 			if decision.Quantity > 0 && decision.Quantity < b.position.Quantity {
 				b.partialClose(candle.Close, decision.Quantity)
 			} else {
 				b.closePosition(candle.Close)
-				// Only open short if it's explicitly a short entry, not just an exit
-				// For the Pulse Scalper, Sell signal at entry means Short
-				b.enterPosition("short", candle.Close, decision)
+				// Only re-enter Short if it's an explicit entry reasoning
+				if decision.Reasoning == "Pulse Entry (Short)" {
+					b.enterPosition("short", candle.Close, decision)
+				}
 			}
 		}
 	case SignalHold:
@@ -222,6 +255,13 @@ func (b *Bot) enterPosition(side string, price float64, decision *Decision) {
 		CurrentPrice: slippedPrice,
 		UnrealizedPnL: 0,
 		OpenedAt:   decision.Timestamp,
+		StopLoss:   price * 0.985,   // Default 1.5% stop
+		TakeProfit: price * 1.015,   // Default 1.5% TP
+	}
+	// Correct for Short positions
+	if side == "short" {
+		b.position.StopLoss = price * 1.015
+		b.position.TakeProfit = price * 0.985
 	}
 }
 
@@ -331,5 +371,5 @@ func (b *Bot) GetTrades() []Position {
 
 // generateID generates a simple ID
 func (b *Bot) generateID() string {
-	return time.Now().Format("20060102150405")
+	return time.Now().Format("20060102150405.000000000")
 }

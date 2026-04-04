@@ -43,12 +43,12 @@ type CandleData struct {
 	Indicators map[string]float64 `json:"indicators,omitempty"` // Added for chart overlay
 }
 
-// PnLData represents PnL update
 type PnLData struct {
-	Balance       float64 `json:"balance"`
-	TotalPnL      float64 `json:"total_pnl"`
-	UnrealizedPnL float64 `json:"unrealized_pnl,omitempty"`
-	WinRate       float64 `json:"win_rate"` // Added for frontend
+	Balance       float64        `json:"balance"`
+	TotalPnL      float64        `json:"total_pnl"`
+	UnrealizedPnL float64        `json:"unrealized_pnl,omitempty"`
+	WinRate       float64        `json:"win_rate"` // Added for frontend
+	Trades        []bot.Position `json:"trades,omitempty"` // For historical auditing
 }
 
 // Hub manages WebSocket connections and broadcasts

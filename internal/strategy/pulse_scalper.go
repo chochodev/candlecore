@@ -94,36 +94,27 @@ func (s *PulseScalperStrategy) PopulateExitSignal(df *DataFrame, current Candle,
 		}
 
 		return Signal{
-			Action:     "sell", // "Exit sell" (not entry)
+			Action:     "hold",
 			Price:      current.Close,
-			Quantity:   pos.Size * 0.5,
 			Reason:     "Fee Shield Triggered (+0.1%). Locking profit vector.",
 			TrailingSL: &lockPrice,
 		}
 	}
 
-	if shieldActive {
-		// Exit if trailing stop hit
-		if pos.Side == "long" && current.Close <= pos.EntryPrice*1.001 {
-			return Signal{Action: "sell", Price: current.Close, Reason: "Shield Lock Hit (Long)"}
-		}
-		if pos.Side == "short" && current.Close >= pos.EntryPrice*0.999 {
-			return Signal{Action: "sell", Price: current.Close, Reason: "Shield Lock Hit (Short)"}
-		}
-
-		// Neural Profit Target (+1.5%)
-		if pnlPct >= 0.015 {
-			return Signal{Action: "sell", Price: current.Close, Reason: "Target Reached (1.5%)"}
-		}
-	}
+	// 🛡️ Engine now handles Autonomous TP/SL Exits in real-time (Intra-candle).
+	// Strategy only handles Trend Reversal (EMA Crosses) at candle close.
 
 	// ── Trend Reversal Exits ───────────────────────────────────────────────────
 	if pos.Side == "long" && lastEMA5 < lastEMA12 {
 		return Signal{Action: "sell", Price: current.Close, Reason: "Trend Flip Exit (Long)"}
 	}
 	if pos.Side == "short" && lastEMA5 > lastEMA12 {
-		return Signal{Action: "sell", Price: current.Close, Reason: "Trend Flip Exit (Short)"}
+		return Signal{Action: "buy", Price: current.Close, Reason: "Trend Flip Exit (Short)"}
 	}
 
 	return Signal{Action: "hold"}
+}
+
+func (s *PulseScalperStrategy) Configure(params map[string]interface{}) {
+	// Config logic
 }

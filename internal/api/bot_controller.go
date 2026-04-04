@@ -35,6 +35,10 @@ type BotController struct {
 	configManager  *config.ConfigManager
 	mu             sync.RWMutex
 	stopChan       chan struct{}
+	currentCandleIdx int    // PERSISTENT INDEX for resume
+	isPaused         bool   // PAUSE STATE flag
+	startTime        int64  // Backtest start (Unix)
+	endTime          int64  // Backtest end (Unix)
 }
 
 // NewBotController creates a new bot controller
@@ -54,6 +58,8 @@ func NewBotController(provider exchange.DataProvider, hub *websocket.Hub, dataDi
 		strategyName:   "ma_crossover",
 		stopChan:       make(chan struct{}),
 		skipSignal:     make(chan struct{}, 1), // Buffered for 1 skip pulse
+		currentCandleIdx: 0,
+		isPaused:         false,
 	}
 }
 
@@ -81,33 +87,41 @@ func (bc *BotController) Start() error {
 		return fmt.Errorf("bot is already running")
 	}
 
-	// Create strategy using registry
-	strategy, err := strategies.GetStrategy(bc.strategyName)
-	if err != nil {
-		return fmt.Errorf("failed to create strategy: %w", err)
-	}
+	// Create bot only if it doesn't exist OR if user wants a clean start
+	if bc.bot == nil {
+		// Create strategy using registry
+		strategy, err := strategies.GetStrategy(bc.strategyName)
+		if err != nil {
+			return fmt.Errorf("failed to create strategy: %w", err)
+		}
 
-	// Apply configuration
-	if bc.strategyParams != nil {
-		strategy.Configure(bc.strategyParams)
-	}
+		// Apply configuration
+		if bc.strategyParams != nil {
+			strategy.Configure(bc.strategyParams)
+		}
 
-	// Create bot
-	bc.bot = bot.NewBot(strategy, bc.provider, bot.Config{
-		Symbol:         bc.symbol,
-		Timeframe:      bc.timeframe,
-		InitialBalance: 10000,
-		PositionSize:   10,
-	})
+		bc.bot = bot.NewBot(strategy, bc.provider, bot.Config{
+			Symbol:         bc.symbol,
+			Timeframe:      bc.timeframe,
+			InitialBalance: 10000,
+			PositionSize:   10,
+		})
+		bc.currentCandleIdx = 0
+	}
 
 	bc.isRunning = true
+	bc.isPaused = false
 	bc.stopChan = make(chan struct{})
 
 	// Start processing
 	go bc.run()
 
 	bc.saveProfile() // Persist start state
-	bc.hub.BroadcastStatus("started")
+	if bc.currentCandleIdx > 0 {
+		bc.hub.BroadcastStatus("resumed")
+	} else {
+		bc.hub.BroadcastStatus("started")
+	}
 	log.Printf("Bot started: symbol=%s, timeframe=%s, strategy=%s", bc.symbol, bc.timeframe, bc.strategyName)
 
 	return nil
@@ -124,10 +138,11 @@ func (bc *BotController) Stop() error {
 
 	close(bc.stopChan)
 	bc.isRunning = false
+	bc.isPaused = true
 	bc.saveProfile() // Persist stop state
 	bc.hub.BroadcastStatus("stopped")
 
-	log.Println("Bot stopped")
+	log.Printf("Bot paused at candle index %d", bc.currentCandleIdx)
 	return nil
 }
 
@@ -142,6 +157,8 @@ func (bc *BotController) Reset() error {
 
 	bc.wallet = exchange.NewVirtualWallet(10000.0) // Reset to $10k
 	bc.isSkipping = false
+	bc.currentCandleIdx = 0
+	bc.bot = nil // Force re-creation on next Start
 	bc.hub.BroadcastStatus("reset")
 	
 	log.Println("Bot state reset to initial parameters")
@@ -154,8 +171,28 @@ func (bc *BotController) run() {
 		bc.symbol, bc.timeframe, bc.strategyName, bc.replayMode, bc.replaySpeed)
 
 	// 📊 STRICT HISTORICAL DATA LOADING
+	// 🚀 Fetch candles with Range Vector Filtering
 	candles, err := bc.provider.GetCandles(bc.symbol, bc.timeframe, 0)
-	if err != nil || len(candles) == 0 {
+	if err != nil {
+		log.Printf("Error fetching candles: %s", err)
+		return
+	}
+
+	// Filter candles based on Start/End Time vectors
+	var filteredCandles []exchange.Candle
+	for _, c := range candles {
+		t := c.Timestamp.Unix()
+		if bc.startTime > 0 && t < bc.startTime {
+			continue
+		}
+		if bc.endTime > 0 && t > bc.endTime {
+			break // End of vector reached
+		}
+		filteredCandles = append(filteredCandles, c)
+	}
+	candles = filteredCandles
+
+	if len(candles) == 0 {
 		log.Printf("❌ CRITICAL ERROR: Could not load data for %s/%s. File not found in data/historical. Error: %v", bc.symbol, bc.timeframe, err)
 		bc.hub.BroadcastStatus("failed: data_missing")
 		bc.Stop() 
@@ -167,11 +204,16 @@ func (bc *BotController) run() {
 	// Buffer for high-speed jumps to provide context
 	var jumpContext []websocket.CandleData
 
-	// Stream candles one-by-one like a real-time WebSocket feed
-	for i, candle := range candles {
+	// Stream candles starting from PERSISTENT INDEX
+	for i := bc.currentCandleIdx; i < len(candles); i++ {
+		candle := candles[i]
+		bc.mu.Lock()
+		bc.currentCandleIdx = i
+		bc.mu.Unlock()
+
 		select {
 		case <-bc.stopChan:
-			log.Println("Bot stopped by user")
+			log.Println("Bot paused by user")
 			return
 		default:
 		}
@@ -238,7 +280,10 @@ func (bc *BotController) run() {
 						winRate = (float64(wins) / float64(len(trades))) * 100
 					}
 					bc.hub.BroadcastPnL(websocket.PnLData{
-						Balance: bc.bot.GetBalance(), TotalPnL: bc.bot.GetTotalPnL(), WinRate: winRate,
+						Balance: bc.bot.GetBalance(), 
+						TotalPnL: bc.bot.GetTotalPnL(), 
+						WinRate: winRate,
+						Trades: trades,
 					})
 				}
 			}
@@ -289,6 +334,7 @@ func (bc *BotController) GetStatus() map[string]interface{} {
 	defer bc.mu.RUnlock()
 	status := map[string]interface{}{
 		"running":      bc.isRunning,
+		"paused":       bc.isPaused, 
 		"symbol":       bc.symbol,
 		"timeframe":    bc.timeframe,
 		"strategy":     bc.strategyName,
@@ -347,18 +393,84 @@ func (bc *BotController) SetupRoutes(router *gin.Engine) {
 		})
 		api.GET("/status", func(c *gin.Context) { c.JSON(200, bc.GetStatus()) })
 		api.POST("/configure", func(c *gin.Context) {
-			var req struct {
-				Symbol string `json:"symbol"`; Timeframe string `json:"timeframe"`; Strategy string `json:"strategy"`; 
-				ReplayMode bool `json:"replay_mode"`; DryRun bool `json:"dry_run"`; ReplaySpeed float64 `json:"replay_speed"`;
-				StrategyParams map[string]interface{} `json:"strategy_params"`
+			var config struct {
+				Symbol       string                 `json:"symbol"`
+				Timeframe    string                 `json:"timeframe"`
+				Strategy     string                 `json:"strategy"`
+				ReplayMode   bool                   `json:"replay_mode"`
+				DryRun       bool                   `json:"dry_run"`
+				ReplaySpeed  float64                `json:"replay_speed"`
+				StartTime    int64                  `json:"start_time"`
+				EndTime      int64                  `json:"end_time"`
+				Params       map[string]interface{} `json:"params"`
 			}
-			if err := c.ShouldBindJSON(&req); err != nil { c.JSON(400, gin.H{"error": err.Error()}); return }
-			if err := bc.Configure(req.Symbol, exchange.Timeframe(req.Timeframe), req.Strategy, req.ReplayMode, req.DryRun, req.ReplaySpeed, req.StrategyParams); err != nil {
-				c.JSON(400, gin.H{"error": err.Error()}); return
+
+			if err := c.ShouldBindJSON(&config); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
 			}
+
+			bc.mu.Lock()
+			defer bc.mu.Unlock()
+
+			bc.symbol = config.Symbol
+			bc.timeframe = exchange.Timeframe(config.Timeframe)
+			bc.strategyName = config.Strategy
+			bc.replayMode = config.ReplayMode
+			bc.dryRun = config.DryRun
+			bc.replaySpeed = time.Duration(config.ReplaySpeed * float64(time.Second))
+			bc.startTime = config.StartTime
+			bc.endTime = config.EndTime
+			bc.strategyParams = config.Params
+			bc.saveProfile()
 			c.JSON(200, gin.H{"status": "configured"})
 		})
+		api.GET("/pnl", bc.HandleGetPnL)
 	}
+}
+
+func (bc *BotController) HandleGetPnL(c *gin.Context) {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+
+	trades := bc.wallet.GetTrades()
+	balance := bc.wallet.GetBalance()
+	totalPnL := bc.wallet.GetTotalPnL()
+
+	wins := 0
+	for _, t := range trades {
+		if t.PnL > 0 {
+			wins++
+		}
+	}
+
+	winRate := 0.0
+	if len(trades) > 0 {
+		winRate = (float64(wins) / float64(len(trades))) * 100
+	}
+
+	// Map trades to common JSON format
+	var jsonTrades []interface{}
+	for _, t := range trades {
+		jsonTrades = append(jsonTrades, gin.H{
+			"id":           fmt.Sprintf("T-%d", time.Now().UnixNano()),
+			"symbol":       t.Symbol,
+			"side":         t.Side,
+			"entry_price":  t.EntryPrice,
+			"current_price": t.ExitPrice, // For closed trades, current_price is exit price
+			"realized_pnl":  t.PnL / t.EntryPrice * 100, // Show as percentage
+			"opened_at":     t.OpenedAt,
+			"closed_at":     t.ClosedAt,
+			"reasoning":     "Technical backtest signal",
+		})
+	}
+
+	c.JSON(200, gin.H{
+		"total_pnl": totalPnL,
+		"win_rate":  winRate,
+		"balance":   balance,
+		"trades":    jsonTrades,
+	})
 }
 
 var upgrader = gorillaws.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
