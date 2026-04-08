@@ -24,8 +24,8 @@ type VersionReport struct {
 func main() {
 	dataDir := "data/historical"
 	changelogDir := "changelog"
-	version := "1.0.7"
-	strategyName := "alpha_prime"
+	version := "1.0.8"
+	strategyName := "ma_crossover"
 
 	if err := os.MkdirAll(changelogDir, 0755); err != nil {
 		log.Fatal(err)
@@ -39,7 +39,7 @@ func main() {
 	report := &VersionReport{
 		Version:     version,
 		Timestamp:   time.Now(),
-		Description: "Alpha Prime (v1.0.7): High-Conviction SMA 12/26 Hybrid optimized for crypto momentum. Anchored to v1.0.0's 83% PnL logic with modern re-entry and profit-take guards.",
+		Description: "MA Crossover (v1.0.8): Symmetric long/short crossover engine with mirrored bearish entries and buy-to-cover exits for short-side parity.",
 		Benchmarks:  make([]*engine.BacktestReport, 0),
 	}
 

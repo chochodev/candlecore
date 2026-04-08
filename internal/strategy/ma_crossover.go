@@ -60,7 +60,7 @@ func (s *MACrossoverStrategy) PopulateEntrySignal(df *DataFrame, current Candle)
 	pf := GetPrev(df, "sma_f")
 	ps := GetPrev(df, "sma_s")
 
-	// Same entry logic as v1.0.0
+	// Long entry: bullish crossover
 	if pf <= ps && f > sP {
 		return Signal{
 			Action:     "buy",
@@ -69,24 +69,47 @@ func (s *MACrossoverStrategy) PopulateEntrySignal(df *DataFrame, current Candle)
 			Price:      current.Close,
 		}
 	}
+
+	// Short entry: mirrored bearish crossover
+	if pf >= ps && f < sP {
+		return Signal{
+			Action:     "sell",
+			Confidence: 75,
+			Reason:     "Death Cross (Baseline Match)",
+			Price:      current.Close,
+		}
+	}
+
 	return Signal{Action: "hold"}
 }
 
 func (s *MACrossoverStrategy) PopulateExitSignal(df *DataFrame, current Candle, position Position) Signal {
-	// 🛡️ ENFORCED SAFETY
-	profitPct := (current.Close - position.EntryPrice) / position.EntryPrice
-	if profitPct <= s.StopLimit {
-		return Signal{Action: "sell", Reason: "Enforced Stop Loss (3%)", Price: current.Close}
-	}
-
 	f := GetVal(df, "sma_f")
 	sP := GetVal(df, "sma_s")
 	pf := GetPrev(df, "sma_f")
 	ps := GetPrev(df, "sma_s")
 
-	// Standard technical exit
-	if pf >= ps && f < sP {
-		return Signal{Action: "sell", Reason: "Technical Exit", Price: current.Close}
+	// Symmetric PnL computation per side
+	profitPct := (current.Close - position.EntryPrice) / position.EntryPrice
+	if position.Side == "short" {
+		profitPct = (position.EntryPrice - current.Close) / position.EntryPrice
+	}
+
+	// Safety stop mirrored by side
+	if profitPct <= s.StopLimit {
+		if position.Side == "short" {
+			return Signal{Action: "buy", Reason: "Enforced Stop Loss (3%)", Price: current.Close}
+		}
+		return Signal{Action: "sell", Reason: "Enforced Stop Loss (3%)", Price: current.Close}
+	}
+
+	// Technical exits mirrored by side
+	if position.Side == "long" && pf >= ps && f < sP {
+		return Signal{Action: "sell", Reason: "Technical Exit (Long)", Price: current.Close}
+	}
+
+	if position.Side == "short" && pf <= ps && f > sP {
+		return Signal{Action: "buy", Reason: "Technical Exit (Short)", Price: current.Close}
 	}
 
 	return Signal{Action: "hold"}

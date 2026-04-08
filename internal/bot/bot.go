@@ -16,55 +16,56 @@ const (
 
 // Decision represents a bot decision with reasoning
 type Decision struct {
-	Timestamp  time.Time         `json:"timestamp"`
-	Signal     Signal            `json:"signal"`
-	Symbol     string            `json:"symbol"`
-	Price      float64           `json:"price"`
-	Quantity   float64           `json:"quantity"`
-	Confidence float64           `json:"confidence"` // 0-100
-	Reasoning  string            `json:"reasoning"`
-	Indicators map[string]float64 `json:"indicators"` // indicator values at decision time
+	Timestamp  time.Time          `json:"timestamp"`
+	Signal     Signal             `json:"signal"`
+	Symbol     string             `json:"symbol"`
+	Price      float64            `json:"price"`
+	Quantity   float64            `json:"quantity"`
+	Confidence float64            `json:"confidence"` // 0-100
+	Reasoning  string             `json:"reasoning"`
+	Indicators map[string]float64 `json:"indicators"`            // indicator values at decision time
 	TrailingSL *float64           `json:"trailing_sl,omitempty"` // Propagated from strategy
 }
 
 // Position represents an open position
 type Position struct {
-	ID         string    `json:"id"`
-	Symbol     string    `json:"symbol"`
-	Side       string    `json:"side"` // "long" or "short"
-	EntryPrice float64   `json:"entry_price"`
-	Quantity   float64   `json:"quantity"`
-	CurrentPrice float64 `json:"current_price"`
-	UnrealizedPnL float64 `json:"unrealized_pnl"`
-	RealizedPnL   float64 `json:"realized_pnl"`
-	PnLPct        float64 `json:"pnl_pct"`
-	EntryFee      float64 `json:"entry_fee"`
-	OpenedAt   time.Time `json:"opened_at"`
-	ClosedAt   *time.Time `json:"closed_at,omitempty"`
-	StopLoss   float64   `json:"stop_loss"`
-	TakeProfit float64   `json:"take_profit"`
-	TrailingSL *float64   `json:"trailing_sl,omitempty"` // For the dynamic SL line
+	ID            string     `json:"id"`
+	Symbol        string     `json:"symbol"`
+	Side          string     `json:"side"` // "long" or "short"
+	EntryPrice    float64    `json:"entry_price"`
+	Quantity      float64    `json:"quantity"`
+	CurrentPrice  float64    `json:"current_price"`
+	UnrealizedPnL float64    `json:"unrealized_pnl"`
+	RealizedPnL   float64    `json:"realized_pnl"`
+	PnLPct        float64    `json:"pnl_pct"`
+	EntryFee      float64    `json:"entry_fee"`
+	OpenedAt      time.Time  `json:"opened_at"`
+	ClosedAt      *time.Time `json:"closed_at,omitempty"`
+	StopLoss      float64    `json:"stop_loss"`
+	TakeProfit    float64    `json:"take_profit"`
+	TrailingSL    *float64   `json:"trailing_sl,omitempty"`
+	Reasoning     string     `json:"reasoning,omitempty"`
 }
 
 // Strategy defines the interface for trading strategies
 type Strategy interface {
 	// Name returns the strategy name
 	Name() string
-	
+
 	// Analyze analyzes candles and produces a decision
 	Analyze(candles []exchange.Candle, currentPos *Position) (*Decision, error)
-	
+
 	// Configure updates strategy parameters
 	Configure(params map[string]interface{}) error
 }
 
 // Bot represents the trading bot
 type Bot struct {
-	strategy      Strategy
-	symbol        string
-	timeframe     exchange.Timeframe
-	provider      exchange.DataProvider
-	position      *Position
+	strategy       Strategy
+	symbol         string
+	timeframe      exchange.Timeframe
+	provider       exchange.DataProvider
+	position       *Position
 	balance        float64
 	initialBalance float64
 	trades         []Position
@@ -152,7 +153,7 @@ func (b *Bot) ApplyRiskGuards(candle exchange.Candle) {
 		if candle.High >= warpTrigger {
 			oldTP := pos.TakeProfit
 			pos.TakeProfit = oldTP + (tpDistance * 0.5) // Extend by 50% of original distance
-			lockProfit := oldTP * 0.998                  // Lock 0.2% below previous TP
+			lockProfit := oldTP * 0.998                 // Lock 0.2% below previous TP
 			if pos.TrailingSL == nil || lockProfit > *pos.TrailingSL {
 				pos.TrailingSL = &lockProfit
 			}
@@ -233,7 +234,7 @@ func (b *Bot) RunBacktest(candles []exchange.Candle) error {
 
 		// Execute decision (this handles positions and balance internally)
 		b.executeDecision(decision, candle)
-		
+
 		// Record balance for drawdown/sharpe
 		currBalance := b.balance
 		if b.position != nil {
@@ -254,7 +255,6 @@ func (b *Bot) RunBacktest(candles []exchange.Candle) error {
 func (b *Bot) GetBalanceHistory() []float64 {
 	return b.balanceHistory
 }
-
 
 // executeDecision executes a trading decision
 func (b *Bot) executeDecision(decision *Decision, candle exchange.Candle) {
@@ -303,7 +303,7 @@ func (b *Bot) enterPosition(side string, price float64, decision *Decision) {
 	}
 
 	// Calculate slippage (0.05% typically for high-liquidity pairs)
-	slippedPrice := price * 1.0005 
+	slippedPrice := price * 1.0005
 
 	// Calculate position size (use 10% of balance for simplicity)
 	quantity := (b.balance * 0.1) / slippedPrice
@@ -311,22 +311,22 @@ func (b *Bot) enterPosition(side string, price float64, decision *Decision) {
 	b.balance -= fee
 
 	b.position = &Position{
-		ID:         b.generateID(),
-		Symbol:     b.symbol,
-		Side:       side,
-		EntryPrice: slippedPrice,
-		Quantity:   quantity,
-		CurrentPrice: slippedPrice,
+		ID:            b.generateID(),
+		Symbol:        b.symbol,
+		Side:          side,
+		EntryPrice:    slippedPrice,
+		Quantity:      quantity,
+		CurrentPrice:  slippedPrice,
 		UnrealizedPnL: 0,
-		EntryFee:   fee,
-		OpenedAt:   decision.Timestamp,
-		StopLoss:   decision.Price * 0.992,   // Dynamic fallback: 0.8% stop
-		TakeProfit: decision.Price * 1.018,   // Dynamic fallback: 1.8% TP
+		EntryFee:      fee,
+		OpenedAt:      decision.Timestamp,
+		StopLoss:      decision.Price * 0.992, // Dynamic fallback: 0.8% stop
+		TakeProfit:    decision.Price * 1.018, // Dynamic fallback: 1.8% TP
 	}
 
 	// STRATEGY OVERRIDE: Prioritize adapter TP/SL if calibrated
 	// We'll add custom logic here to read from strategy metadata in next pulse
-	
+
 	// Correct for Short positions
 	if side == "short" {
 		b.position.StopLoss = decision.Price * 1.008
@@ -351,14 +351,14 @@ func (b *Bot) closePosition(price float64) {
 	}
 
 	b.position.CurrentPrice = slippedPrice
-	
+
 	// Final Net PnL = (Price move PnL) - (Entry Fee) - (Exit Fee)
 	exitFee := (b.position.Quantity * slippedPrice) * 0.001
 	totalNetPnL := pnl - b.position.EntryFee - exitFee
-	
+
 	b.position.RealizedPnL = totalNetPnL
 	b.position.PnLPct = (totalNetPnL / (b.position.EntryPrice * b.position.Quantity)) * 100
-	
+
 	now := time.Now()
 	b.position.ClosedAt = &now
 
@@ -400,8 +400,8 @@ func (b *Bot) partialClose(price, quantity float64) {
 	// Update remaining position and balance
 	b.position.Quantity -= quantity
 	b.balance += (price * quantity) // Simplified: adding proceeds to balance
-	
-	// Note: We don't update entry price for partial sells, 
+
+	// Note: We don't update entry price for partial sells,
 	// but we could adjust it if it were a partial buy (DCA).
 }
 
@@ -412,7 +412,7 @@ func (b *Bot) updatePosition(price float64) {
 	}
 
 	b.position.CurrentPrice = price
-	
+
 	if b.position.Side == "long" {
 		b.position.UnrealizedPnL = (price - b.position.EntryPrice) * b.position.Quantity
 	} else {

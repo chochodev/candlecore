@@ -55,7 +55,7 @@ func NewBotController(provider exchange.DataProvider, hub *websocket.Hub, dataDi
 		dryRun:         true,                     // Default to dry-run for safety
 		symbol:         "sol",
 		timeframe:      exchange.Timeframe1h,
-		strategyName:   "ma_crossover",
+		strategyName:   "pulse_scalper",
 		stopChan:       make(chan struct{}),
 		skipSignal:     make(chan struct{}, 1), // Buffered for 1 skip pulse
 		currentCandleIdx: 0,
@@ -242,9 +242,11 @@ func (bc *BotController) run() {
 		if i >= 30 {
 			decision, err := bc.bot.ProcessCandle(candle)
 			if err == nil {
-				// Enrich candle with indicators for the chart
-				cData.Indicators["fast_ma"] = decision.Indicators["fast_ma"]
-				cData.Indicators["slow_ma"] = decision.Indicators["slow_ma"]
+				if decision.Indicators != nil {
+					cData.Indicators["fast_ma"] = decision.Indicators["ema_9"]
+					cData.Indicators["slow_ma"] = decision.Indicators["ema_21"]
+					cData.Indicators["rsi"] = decision.Indicators["rsi_14"]
+				}
 
 				if decision.Signal != "hold" {
 					if skip {
