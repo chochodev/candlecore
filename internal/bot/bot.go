@@ -159,6 +159,17 @@ func (b *Bot) ApplyRiskGuards(candle exchange.Candle) {
 			}
 		}
 
+		// ─── PROFIT RATCHET (LONG) ─────────────────────────────────────────────
+		// Lift stop under new highs so favorable moves lock in (never below initial SL).
+		const trailFracLong = 0.0025 // 0.25% below local high
+		if candle.High > pos.EntryPrice {
+			cand := candle.High * (1.0 - trailFracLong)
+			if cand > pos.StopLoss && (pos.TrailingSL == nil || cand > *pos.TrailingSL) {
+				t := cand
+				pos.TrailingSL = &t
+			}
+		}
+
 		// ─── EXIT ENFORCEMENT (LONG) ──────────────────────────────────────────
 		slPrice := pos.StopLoss
 		if pos.TrailingSL != nil {
@@ -188,6 +199,17 @@ func (b *Bot) ApplyRiskGuards(candle exchange.Candle) {
 			lockProfit := oldTP * 1.002                 // Lock 0.2% above previous TP
 			if pos.TrailingSL == nil || lockProfit < *pos.TrailingSL {
 				pos.TrailingSL = &lockProfit
+			}
+		}
+
+		// ─── PROFIT RATCHET (SHORT) ────────────────────────────────────────────
+		// Tighten stop toward price as new lows are made (numeric SL moves down).
+		const trailFracShort = 0.0025 // 0.25% above local low
+		if candle.Low < pos.EntryPrice {
+			cand := candle.Low * (1.0 + trailFracShort)
+			if cand < pos.StopLoss && (pos.TrailingSL == nil || cand < *pos.TrailingSL) {
+				t := cand
+				pos.TrailingSL = &t
 			}
 		}
 

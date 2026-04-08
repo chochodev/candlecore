@@ -19,12 +19,14 @@ type VersionReport struct {
 	Timestamp   time.Time               `json:"timestamp"`
 	Description string                  `json:"description"`
 	Benchmarks  []*engine.BacktestReport `json:"benchmarks"`
+	// Scorecard is filled when using DedupeBenchmarks + BuildScorecard from aggregate.go (v1.0.8a+).
+	Scorecard ScorecardSummary `json:"scorecard"`
 }
 
 func main() {
 	dataDir := "data/historical"
 	changelogDir := "changelog"
-	version := "1.0.8"
+	version := "1.0.8a"
 	strategyName := "ma_crossover"
 
 	if err := os.MkdirAll(changelogDir, 0755); err != nil {
@@ -39,7 +41,7 @@ func main() {
 	report := &VersionReport{
 		Version:     version,
 		Timestamp:   time.Now(),
-		Description: "MA Crossover (v1.0.8): Symmetric long/short crossover engine with mirrored bearish entries and buy-to-cover exits for short-side parity.",
+		Description: "MA Crossover (v1.0.8a): Deduplicated benchmarks (canonical symbols) + scorecard aggregate; same strategy as v1.0.8.",
 		Benchmarks:  make([]*engine.BacktestReport, 0),
 	}
 
@@ -106,6 +108,11 @@ func main() {
 
 		report.Benchmarks = append(report.Benchmarks, reportMetrics)
 	}
+
+	// Optional: canonical dedupe + scorecard (see aggregate.go — remove this block to emit raw per-file rows only).
+	deduped := DedupeBenchmarks(report.Benchmarks)
+	report.Benchmarks = deduped
+	report.Scorecard = BuildScorecard(strategyName, deduped)
 
 	output, _ := json.MarshalIndent(report, "", "  ")
 	outputPath := filepath.Join(changelogDir, fmt.Sprintf("report_v%s.json", version))

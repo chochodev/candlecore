@@ -16,6 +16,9 @@ import (
 	gorillaws "github.com/gorilla/websocket"
 )
 
+// defaultSimBalance is the replay/paper wallet and bot equity starting point for the dashboard simulation.
+const defaultSimBalance = 10.0
+
 // BotController manages bot lifecycle and configuration
 type BotController struct {
 	bot            *bot.Bot
@@ -48,7 +51,7 @@ func NewBotController(provider exchange.DataProvider, hub *websocket.Hub, dataDi
 		provider:       provider,
 		hub:            hub,
 		configManager:  cManager,
-		wallet:         exchange.NewVirtualWallet(10000.0), // $10k virtual balance
+		wallet:         exchange.NewVirtualWallet(defaultSimBalance),
 		isRunning:      false,
 		replayMode:     true,                     // Default to replay mode
 		replaySpeed:    1 * time.Second,          // Default 1 second per candle
@@ -103,7 +106,7 @@ func (bc *BotController) Start() error {
 		bc.bot = bot.NewBot(strategy, bc.provider, bot.Config{
 			Symbol:         bc.symbol,
 			Timeframe:      bc.timeframe,
-			InitialBalance: 10000,
+			InitialBalance: defaultSimBalance,
 			PositionSize:   10,
 		})
 		bc.currentCandleIdx = 0
@@ -155,7 +158,7 @@ func (bc *BotController) Reset() error {
 		return fmt.Errorf("cannot reset while bot is running")
 	}
 
-	bc.wallet = exchange.NewVirtualWallet(10000.0) // Reset to $10k
+	bc.wallet = exchange.NewVirtualWallet(defaultSimBalance)
 	bc.isSkipping = false
 	bc.currentCandleIdx = 0
 	bc.bot = nil // Force re-creation on next Start
