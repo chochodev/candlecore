@@ -119,7 +119,82 @@ func (b *Bot) ProcessCandle(candle exchange.Candle) (*Decision, error) {
 	// Execute decision
 	b.executeDecision(decision, candle)
 
+	// APPLY RISK GUARDS (Live/Paper Enforcement)
+	b.ApplyRiskGuards(candle)
+
 	return decision, nil
+}
+
+// ApplyRiskGuards enforces SL/TP and handles dynamic "Shield" logic
+func (b *Bot) ApplyRiskGuards(candle exchange.Candle) {
+	if b.position == nil {
+		return
+	}
+
+	pos := b.position
+	price := candle.Close
+
+	// ─── SHIELD LOGIC (DYNAMIC SL) ───────────────────────────────────────────
+
+	if pos.Side == "long" {
+		// ─── SHIELD LOGIC (LONG) ─────────────────────────────────────────────
+		feeBreakeven := pos.EntryPrice * 1.0022
+		if candle.High > feeBreakeven && pos.TrailingSL == nil {
+			pos.TrailingSL = &feeBreakeven
+		}
+
+		warpThreshold := pos.EntryPrice + (pos.TakeProfit-pos.EntryPrice)*0.5
+		if candle.High >= warpThreshold {
+			lockProfit := pos.EntryPrice + (pos.TakeProfit-pos.EntryPrice)*0.25
+			if pos.TrailingSL == nil || lockProfit > *pos.TrailingSL {
+				pos.TrailingSL = &lockProfit
+			}
+		}
+
+		// ─── EXIT ENFORCEMENT (LONG) ──────────────────────────────────────────
+		slPrice := pos.StopLoss
+		if pos.TrailingSL != nil {
+			slPrice = *pos.TrailingSL
+		}
+
+		if candle.Low <= slPrice {
+			b.closePosition(slPrice)
+		} else if candle.High >= pos.TakeProfit {
+			b.closePosition(pos.TakeProfit)
+		}
+
+	} else if pos.Side == "short" {
+		// ─── SHIELD LOGIC (SHORT) ────────────────────────────────────────────
+		feeBreakeven := pos.EntryPrice * 0.9978
+		if candle.Low < feeBreakeven && pos.TrailingSL == nil {
+			pos.TrailingSL = &feeBreakeven
+		}
+
+		warpThreshold := pos.EntryPrice - (pos.EntryPrice-pos.TakeProfit)*0.5
+		if candle.Low <= warpThreshold {
+			lockProfit := pos.EntryPrice - (pos.EntryPrice-pos.TakeProfit)*0.25
+			if pos.TrailingSL == nil || lockProfit < *pos.TrailingSL {
+				pos.TrailingSL = &lockProfit
+			}
+		}
+
+		// ─── EXIT ENFORCEMENT (SHORT) ─────────────────────────────────────────
+		slPrice := pos.StopLoss
+		if pos.TrailingSL != nil {
+			slPrice = *pos.TrailingSL
+		}
+
+		if candle.High >= slPrice {
+			b.closePosition(slPrice)
+		} else if candle.Low <= pos.TakeProfit {
+			b.closePosition(pos.TakeProfit)
+		}
+	}
+
+	// Update unrealized PnL for streaming
+	if b.position != nil {
+		b.updatePosition(price)
+	}
 }
 
 // RunBacktest runs a fast backtest on a slice of candles
@@ -149,35 +224,11 @@ func (b *Bot) RunBacktest(candles []exchange.Candle) error {
 		// Record balance for drawdown/sharpe
 		currBalance := b.balance
 		if b.position != nil {
-			// 🛡️ AUTONOMOUS RISK GUARD: Check intra-candle TP/SL hits
-			// Long Exit Check
-			if b.position.Side == "long" {
-				// Check Stop Loss (Trailing if exists, else original)
-				slPrice := b.position.StopLoss
-				if b.position.TrailingSL != nil {
-					slPrice = *b.position.TrailingSL
-				}
-				if candle.Low <= slPrice {
-					b.closePosition(slPrice)
-				} else if candle.High >= b.position.TakeProfit {
-					b.closePosition(b.position.TakeProfit)
-				}
-			} else if b.position.Side == "short" {
-				// Short Exit Check
-				slPrice := b.position.StopLoss
-				if b.position.TrailingSL != nil {
-					slPrice = *b.position.TrailingSL
-				}
-				if candle.High >= slPrice {
-					b.closePosition(slPrice)
-				} else if candle.Low <= b.position.TakeProfit {
-					b.closePosition(b.position.TakeProfit)
-				}
-			}
+			// AUTONOMOUS RISK GUARD: Check intra-candle TP/SL hits
+			b.ApplyRiskGuards(candle)
 
 			// If position still exists, update normal PnL
 			if b.position != nil {
-				b.updatePosition(candle.Close)
 				currBalance += b.position.UnrealizedPnL
 			}
 		}
@@ -255,13 +306,17 @@ func (b *Bot) enterPosition(side string, price float64, decision *Decision) {
 		CurrentPrice: slippedPrice,
 		UnrealizedPnL: 0,
 		OpenedAt:   decision.Timestamp,
-		StopLoss:   price * 0.985,   // Default 1.5% stop
-		TakeProfit: price * 1.015,   // Default 1.5% TP
+		StopLoss:   decision.Price * 0.992,   // Dynamic fallback: 0.8% stop
+		TakeProfit: decision.Price * 1.018,   // Dynamic fallback: 1.8% TP
 	}
+
+	// STRATEGY OVERRIDE: Prioritize adapter TP/SL if calibrated
+	// We'll add custom logic here to read from strategy metadata in next pulse
+	
 	// Correct for Short positions
 	if side == "short" {
-		b.position.StopLoss = price * 1.015
-		b.position.TakeProfit = price * 0.985
+		b.position.StopLoss = decision.Price * 1.008
+		b.position.TakeProfit = decision.Price * 0.982
 	}
 }
 

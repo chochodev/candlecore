@@ -58,11 +58,11 @@ func (s *AlphaPrimeStrategy) PopulateEntrySignal(df *DataFrame, current Candle) 
 	prev12 := GetPrev(df, "sma_12")
 	prev26 := GetPrev(df, "sma_26")
 
-	// 🧩 Golden Cross + ADX Filter
+	// Golden Cross + ADX Filter
 	isCrossover := sma12 > sma26 && prev12 <= prev26
 	isStrongTrend := adx > 15.0
 
-	// 🧩 Re-Entry Logic (Pullback to SMA 26)
+	// Re-Entry Logic (Pullback to SMA 26)
 	isPullback := current.Low <= sma26 && current.Close > sma26 && sma12 > sma26
 
 	if isStrongTrend && (isCrossover || isPullback) {
@@ -77,7 +77,7 @@ func (s *AlphaPrimeStrategy) PopulateEntrySignal(df *DataFrame, current Candle) 
 func (s *AlphaPrimeStrategy) PopulateExitSignal(df *DataFrame, current Candle, pos Position) Signal {
 	ema8 := GetVal(df, "ema_8")
 
-	// 🔴 Fast EMA Exit (Momentum loss)
+	// Fast EMA Exit (Momentum loss)
 	if current.Close < ema8 && GetPrev(df, "ema_8") >= GetPrev(df, "sma_12") {
 		return Signal{Action: "sell", Price: current.Close, Reason: "Momentum Exit (EMA 8)"}
 	}

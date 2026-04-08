@@ -170,8 +170,8 @@ func (bc *BotController) run() {
 	log.Printf("Starting bot: symbol=%s, timeframe=%s, strategy=%s, replay=%v, speed=%v",
 		bc.symbol, bc.timeframe, bc.strategyName, bc.replayMode, bc.replaySpeed)
 
-	// 📊 STRICT HISTORICAL DATA LOADING
-	// 🚀 Fetch candles with Range Vector Filtering
+	// STRICT HISTORICAL DATA LOADING
+	// Fetch candles with Range Vector Filtering
 	candles, err := bc.provider.GetCandles(bc.symbol, bc.timeframe, 0)
 	if err != nil {
 		log.Printf("Error fetching candles: %s", err)
@@ -193,7 +193,7 @@ func (bc *BotController) run() {
 	candles = filteredCandles
 
 	if len(candles) == 0 {
-		log.Printf("❌ CRITICAL ERROR: Could not load data for %s/%s. File not found in data/historical. Error: %v", bc.symbol, bc.timeframe, err)
+		log.Printf("CRITICAL ERROR: Could not load data for %s/%s. File not found in data/historical. Error: %v", bc.symbol, bc.timeframe, err)
 		bc.hub.BroadcastStatus("failed: data_missing")
 		bc.Stop() 
 		return
@@ -223,7 +223,7 @@ func (bc *BotController) run() {
 		bc.mu.RUnlock()
 
 		if skip && i % 1000 == 0 {
-			log.Printf("🛰️ NEURAL WARP SEARCHING: Index %d/%d (%s)...", i, len(candles), bc.symbol)
+			log.Printf("NEURAL WARP SEARCHING: Index %d/%d (%s)...", i, len(candles), bc.symbol)
 		}
 
 		// Prepare current candle data
@@ -248,11 +248,11 @@ func (bc *BotController) run() {
 
 				if decision.Signal != "hold" {
 					if skip {
-						// 🚀 WARP ARRIVED: Release RLock context is already gone, just use skip local
+						// WARP ARRIVED: Release RLock context is already gone, just use skip local
 						finalBatch := append(jumpContext, cData)
-						log.Printf("🎯 WARP SIGNAL DETECTED at index %d: %s at $%.2f", i, decision.Signal, decision.Price)
-						log.Printf("🛰️ NEURAL WARP COMPLETE: Sending %d context candles", len(finalBatch))
-						log.Printf("🚀 Warp Arrived: Context Sync Triggered")
+						log.Printf("WARP SIGNAL DETECTED at index %d: %s at $%.2f", i, decision.Signal, decision.Price)
+						log.Printf("NEURAL WARP COMPLETE: Sending %d context candles", len(finalBatch))
+						log.Printf("Warp Arrived: Context Sync Triggered")
 						bc.hub.BroadcastHistory(finalBatch)
 						
 						bc.mu.Lock()
@@ -306,7 +306,7 @@ func (bc *BotController) run() {
 	bc.mu.RUnlock()
 
 	if wasSkipping {
-		log.Printf("⚠️ Simulation reached EOF without finding a signal. Sending last context.")
+		log.Printf("Simulation reached EOF without finding a signal. Sending last context.")
 		bc.hub.BroadcastHistory(jumpContext)
 		bc.hub.BroadcastStatus("finished: no_signal_detected")
 	} else {
@@ -433,36 +433,77 @@ func (bc *BotController) HandleGetPnL(c *gin.Context) {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 
-	trades := bc.wallet.GetTrades()
-	balance := bc.wallet.GetBalance()
-	totalPnL := bc.wallet.GetTotalPnL()
+	var balance float64
+	var totalPnL float64
+	var wins int
+	var tradesCount int
+	
+	// Map trades to common JSON format
+	var jsonTrades []interface{}
 
-	wins := 0
-	for _, t := range trades {
-		if t.PnL > 0 {
-			wins++
+	if bc.bot != nil {
+		balance = bc.bot.GetBalance()
+		totalPnL = bc.bot.GetTotalPnL()
+		botTrades := bc.bot.GetTrades()
+		tradesCount = len(botTrades)
+		
+		for _, t := range botTrades {
+			investment := t.EntryPrice * t.Quantity
+			var roi float64
+			if investment > 0 {
+				roi = (t.RealizedPnL / investment) * 100
+			}
+			
+			if t.RealizedPnL > 0 {
+				wins++
+			}
+
+			jsonTrades = append(jsonTrades, gin.H{
+				"id":            t.ID,
+				"symbol":        t.Symbol,
+				"side":          t.Side,
+				"entry_price":   t.EntryPrice,
+				"current_price": t.CurrentPrice,
+				"realized_pnl":  roi,
+				"opened_at":     t.OpenedAt,
+				"closed_at":     t.ClosedAt,
+				"reasoning":     "Technical execution",
+			})
+		}
+	} else {
+		balance = bc.wallet.GetBalance()
+		totalPnL = bc.wallet.GetTotalPnL()
+		walletTrades := bc.wallet.GetTrades()
+		tradesCount = len(walletTrades)
+		
+		for _, t := range walletTrades {
+			investment := t.EntryPrice * t.Quantity
+			var roi float64
+			if investment > 0 {
+				roi = (t.PnL / investment) * 100
+			}
+			
+			if t.PnL > 0 {
+				wins++
+			}
+
+			jsonTrades = append(jsonTrades, gin.H{
+				"id":            fmt.Sprintf("TR-%d", t.OpenedAt.UnixNano()),
+				"symbol":        t.Symbol,
+				"side":          t.Side,
+				"entry_price":   t.EntryPrice,
+				"current_price": t.ExitPrice,
+				"realized_pnl":  roi,
+				"opened_at":     t.OpenedAt,
+				"closed_at":     t.ClosedAt,
+				"reasoning":     "Wallet simulated trade",
+			})
 		}
 	}
 
 	winRate := 0.0
-	if len(trades) > 0 {
-		winRate = (float64(wins) / float64(len(trades))) * 100
-	}
-
-	// Map trades to common JSON format
-	var jsonTrades []interface{}
-	for _, t := range trades {
-		jsonTrades = append(jsonTrades, gin.H{
-			"id":           fmt.Sprintf("T-%d", time.Now().UnixNano()),
-			"symbol":       t.Symbol,
-			"side":         t.Side,
-			"entry_price":  t.EntryPrice,
-			"current_price": t.ExitPrice, // For closed trades, current_price is exit price
-			"realized_pnl":  t.PnL / t.EntryPrice * 100, // Show as percentage
-			"opened_at":     t.OpenedAt,
-			"closed_at":     t.ClosedAt,
-			"reasoning":     "Technical backtest signal",
-		})
+	if tradesCount > 0 {
+		winRate = (float64(wins) / float64(tradesCount)) * 100
 	}
 
 	c.JSON(200, gin.H{

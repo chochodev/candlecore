@@ -58,7 +58,7 @@ func (s *PulseScalperStrategy) PopulateEntrySignal(df *DataFrame, current Candle
 		}
 	}
 
-	// 🧩 Short Pulse: Mirror of Long
+	// Short Pulse: Mirror of Long
 	if lastEMA5 < lastEMA12 && current.Close < lastEMA5 && lastRSI < 55 && lastRSI > 35 {
 		return Signal{
 			Action: "sell", Price: current.Close, Reason: "Pulse Entry (Short)",
@@ -82,7 +82,7 @@ func (s *PulseScalperStrategy) PopulateExitSignal(df *DataFrame, current Candle,
 
 	shieldActive := s.shieldActivated[pos.EntryTime]
 
-	// 🛡️ FEE SHIELD (v1.3.1): Multi-Vector Logic
+	// FEE SHIELD (v1.3.1): Multi-Vector Logic
 	if !shieldActive && pnlPct >= 0.001 {
 		s.shieldActivated[pos.EntryTime] = true
 		
@@ -101,7 +101,7 @@ func (s *PulseScalperStrategy) PopulateExitSignal(df *DataFrame, current Candle,
 		}
 	}
 
-	// 🛡️ Engine now handles Autonomous TP/SL Exits in real-time (Intra-candle).
+	// Engine now handles Autonomous TP/SL Exits in real-time (Intra-candle).
 	// Strategy only handles Trend Reversal (EMA Crosses) at candle close.
 
 	// ── Trend Reversal Exits ───────────────────────────────────────────────────
