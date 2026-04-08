@@ -61,11 +61,18 @@ func (s *PulseScalperStrategy) Analyze(candles []exchange.Candle, currentPos *bo
 	// 2. Logic for NO POSITION (Entry)
 	if currentPos == nil {
 		s.stage1Hit = false
-		// Pulse Condition: EMA 9 crosses above EMA 21 + RSI Healthy
+		// LONG Pulse: EMA 9 crosses ABOVE EMA 21 + RSI Healthy
 		if prevEMA9 <= prevEMA21 && lastEMA9 > lastEMA21 && lastRSI < 65 {
 			decision.Signal = bot.SignalBuy
 			decision.Confidence = 85
-			decision.Reasoning = "Pulse: EMA 9/21 Crossover + RSI Health"
+			decision.Reasoning = "Pulse: EMA 9/21 Bullish Cross + RSI"
+			return decision, nil
+		}
+		// SHORT Pulse: EMA 9 crosses BELOW EMA 21 + RSI Healthy
+		if prevEMA9 >= prevEMA21 && lastEMA9 < lastEMA21 && lastRSI > 35 {
+			decision.Signal = bot.SignalSell
+			decision.Confidence = 85
+			decision.Reasoning = "Pulse: EMA 9/21 Bearish Cross (Short) + RSI"
 			return decision, nil
 		}
 		decision.Signal = bot.SignalHold
@@ -73,38 +80,60 @@ func (s *PulseScalperStrategy) Analyze(candles []exchange.Candle, currentPos *bo
 	}
 
 	// 3. Logic for ACTIVE POSITION (Multi-Stage Exit)
-	pnlPct := (lastClose - currentPos.EntryPrice) / currentPos.EntryPrice
+	entryPrice := currentPos.EntryPrice
+	var pnlPct float64
+	if currentPos.Side == "long" {
+		pnlPct = (lastClose - entryPrice) / entryPrice
+	} else {
+		pnlPct = (entryPrice - lastClose) / entryPrice
+	}
 
 	// STAGE 1: Partial Exit (0.8% Profit)
 	if !s.stage1Hit && pnlPct >= s.tp1Pct {
 		s.stage1Hit = true
-		decision.Signal = bot.SignalSell
-		decision.Quantity = currentPos.Quantity * 0.5 // Sell half
+		if currentPos.Side == "long" {
+			decision.Signal = bot.SignalSell
+		} else {
+			decision.Signal = bot.SignalBuy
+		}
+		decision.Quantity = currentPos.Quantity * 0.5 
 		decision.Reasoning = fmt.Sprintf("Stage 1 TP (+%.1f%%). Scaling out 50%%.", pnlPct*100)
 		return decision, nil
 	}
 
-	// STAGE 2: Safety Lock (After Stage 1)
+	// STAGE 2: Safety Lock
 	if s.stage1Hit {
-		// Break-even Protection
-		if lastClose <= currentPos.EntryPrice {
-			decision.Signal = bot.SignalSell
+		isUnderwater := (currentPos.Side == "long" && lastClose <= entryPrice) || (currentPos.Side == "short" && lastClose >= entryPrice)
+		if isUnderwater {
+			if currentPos.Side == "long" {
+				decision.Signal = bot.SignalSell
+			} else {
+				decision.Signal = bot.SignalBuy
+			}
 			decision.Reasoning = "Safety Lock: Exit at Break-even after Stage 1"
 			return decision, nil
 		}
 		
-		// Final Target
 		if pnlPct >= s.tp2Pct {
-			decision.Signal = bot.SignalSell
+			if currentPos.Side == "long" {
+				decision.Signal = bot.SignalSell
+			} else {
+				decision.Signal = bot.SignalBuy
+			}
 			decision.Reasoning = fmt.Sprintf("Stage 2 TP Hit (+%.1f%%)", pnlPct*100)
 			return decision, nil
 		}
 	}
 
 	// EMERGENCY: Trend Reversal
-	if lastEMA9 < lastEMA21 {
-		decision.Signal = bot.SignalSell
-		decision.Reasoning = "Pulse Died: EMA 9/21 Bearish Cross"
+	isReversed := (currentPos.Side == "long" && lastEMA9 < lastEMA21) || (currentPos.Side == "short" && lastEMA9 > lastEMA21)
+	if isReversed {
+		if currentPos.Side == "long" {
+			decision.Signal = bot.SignalSell
+		} else {
+			decision.Signal = bot.SignalBuy
+		}
+		decision.Reasoning = "Pulse Died: Trend Reversal"
 		return decision, nil
 	}
 

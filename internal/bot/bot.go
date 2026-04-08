@@ -37,6 +37,8 @@ type Position struct {
 	CurrentPrice float64 `json:"current_price"`
 	UnrealizedPnL float64 `json:"unrealized_pnl"`
 	RealizedPnL   float64 `json:"realized_pnl"`
+	PnLPct        float64 `json:"pnl_pct"`
+	EntryFee      float64 `json:"entry_fee"`
 	OpenedAt   time.Time `json:"opened_at"`
 	ClosedAt   *time.Time `json:"closed_at,omitempty"`
 	StopLoss   float64   `json:"stop_loss"`
@@ -143,9 +145,14 @@ func (b *Bot) ApplyRiskGuards(candle exchange.Candle) {
 			pos.TrailingSL = &feeBreakeven
 		}
 
-		warpThreshold := pos.EntryPrice + (pos.TakeProfit-pos.EntryPrice)*0.5
-		if candle.High >= warpThreshold {
-			lockProfit := pos.EntryPrice + (pos.TakeProfit-pos.EntryPrice)*0.25
+		// ─── WARP RUNNER (LONG) ───────────────
+		// If we reach 90% of TP, push TP further and lock SL at the old TP door
+		tpDistance := pos.TakeProfit - pos.EntryPrice
+		warpTrigger := pos.EntryPrice + (tpDistance * 0.9)
+		if candle.High >= warpTrigger {
+			oldTP := pos.TakeProfit
+			pos.TakeProfit = oldTP + (tpDistance * 0.5) // Extend by 50% of original distance
+			lockProfit := oldTP * 0.998                  // Lock 0.2% below previous TP
 			if pos.TrailingSL == nil || lockProfit > *pos.TrailingSL {
 				pos.TrailingSL = &lockProfit
 			}
@@ -154,6 +161,7 @@ func (b *Bot) ApplyRiskGuards(candle exchange.Candle) {
 		// ─── EXIT ENFORCEMENT (LONG) ──────────────────────────────────────────
 		slPrice := pos.StopLoss
 		if pos.TrailingSL != nil {
+			// HARDENED GUARD: TrailingSL (Shield) ALWAYS overrides strategy StopLoss
 			slPrice = *pos.TrailingSL
 		}
 
@@ -170,9 +178,13 @@ func (b *Bot) ApplyRiskGuards(candle exchange.Candle) {
 			pos.TrailingSL = &feeBreakeven
 		}
 
-		warpThreshold := pos.EntryPrice - (pos.EntryPrice-pos.TakeProfit)*0.5
-		if candle.Low <= warpThreshold {
-			lockProfit := pos.EntryPrice - (pos.EntryPrice-pos.TakeProfit)*0.25
+		// ─── WARP RUNNER (SHORT) ───────────────
+		tpDistance := pos.EntryPrice - pos.TakeProfit
+		warpTrigger := pos.EntryPrice - (tpDistance * 0.9)
+		if candle.Low <= warpTrigger {
+			oldTP := pos.TakeProfit
+			pos.TakeProfit = oldTP - (tpDistance * 0.5) // Extend down
+			lockProfit := oldTP * 1.002                 // Lock 0.2% above previous TP
 			if pos.TrailingSL == nil || lockProfit < *pos.TrailingSL {
 				pos.TrailingSL = &lockProfit
 			}
@@ -181,6 +193,7 @@ func (b *Bot) ApplyRiskGuards(candle exchange.Candle) {
 		// ─── EXIT ENFORCEMENT (SHORT) ─────────────────────────────────────────
 		slPrice := pos.StopLoss
 		if pos.TrailingSL != nil {
+			// HARDENED GUARD: TrailingSL (Shield) ALWAYS overrides strategy StopLoss
 			slPrice = *pos.TrailingSL
 		}
 
@@ -305,6 +318,7 @@ func (b *Bot) enterPosition(side string, price float64, decision *Decision) {
 		Quantity:   quantity,
 		CurrentPrice: slippedPrice,
 		UnrealizedPnL: 0,
+		EntryFee:   fee,
 		OpenedAt:   decision.Timestamp,
 		StopLoss:   decision.Price * 0.992,   // Dynamic fallback: 0.8% stop
 		TakeProfit: decision.Price * 1.018,   // Dynamic fallback: 1.8% TP
@@ -337,13 +351,19 @@ func (b *Bot) closePosition(price float64) {
 	}
 
 	b.position.CurrentPrice = slippedPrice
-	b.position.RealizedPnL = pnl
+	
+	// Final Net PnL = (Price move PnL) - (Entry Fee) - (Exit Fee)
+	exitFee := (b.position.Quantity * slippedPrice) * 0.001
+	totalNetPnL := pnl - b.position.EntryFee - exitFee
+	
+	b.position.RealizedPnL = totalNetPnL
+	b.position.PnLPct = (totalNetPnL / (b.position.EntryPrice * b.position.Quantity)) * 100
+	
 	now := time.Now()
 	b.position.ClosedAt = &now
 
-	// Update balance
-	exitFee := (b.position.Quantity * slippedPrice) * 0.001
-	b.balance += pnl - exitFee
+	// Update balance (We already subtracted EntryFee at entry, so only subtract ExitFee+Movement here)
+	b.balance += (pnl - exitFee)
 
 	// Store trade
 	trade := *b.position
@@ -398,6 +418,10 @@ func (b *Bot) updatePosition(price float64) {
 	} else {
 		b.position.UnrealizedPnL = (b.position.EntryPrice - price) * b.position.Quantity
 	}
+
+	// Calculate net percentage (subtracting entry fee impact)
+	totalCost := b.position.EntryPrice * b.position.Quantity
+	b.position.PnLPct = (b.position.UnrealizedPnL - b.position.EntryFee) / totalCost * 100
 }
 
 // GetPosition returns the current position
