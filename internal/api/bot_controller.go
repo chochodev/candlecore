@@ -17,7 +17,7 @@ import (
 )
 
 // defaultSimBalance is the replay/paper wallet and bot equity starting point for the dashboard simulation.
-const defaultSimBalance = 10.0
+const defaultSimBalance = 25.0
 
 // BotController manages bot lifecycle and configuration
 type BotController struct {
@@ -57,7 +57,7 @@ func NewBotController(provider exchange.DataProvider, hub *websocket.Hub, dataDi
 		replaySpeed:    1 * time.Second,          // Default 1 second per candle
 		dryRun:         true,                     // Default to dry-run for safety
 		symbol:         "sol",
-		timeframe:      exchange.Timeframe1h,
+		timeframe:      "5m",
 		strategyName:   "pulse_scalper",
 		stopChan:       make(chan struct{}),
 		skipSignal:     make(chan struct{}, 1), // Buffered for 1 skip pulse

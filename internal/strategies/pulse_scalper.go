@@ -16,8 +16,8 @@ type PulseScalperStrategy struct {
 
 func NewPulseScalperStrategy() *PulseScalperStrategy {
 	return &PulseScalperStrategy{
-		tp1Pct:    0.008, // 0.8%
-		tp2Pct:    0.025, // 2.5%
+		tp1Pct:    0.015, // 1.5% (Lowered priority)
+		tp2Pct:    0.050, // 5.0% (Main Target)
 		stage1Hit: false,
 	}
 }
@@ -88,18 +88,8 @@ func (s *PulseScalperStrategy) Analyze(candles []exchange.Candle, currentPos *bo
 		pnlPct = (entryPrice - lastClose) / entryPrice
 	}
 
-	// STAGE 1: Partial Exit (0.8% Profit)
-	if !s.stage1Hit && pnlPct >= s.tp1Pct {
-		s.stage1Hit = true
-		if currentPos.Side == "long" {
-			decision.Signal = bot.SignalSell
-		} else {
-			decision.Signal = bot.SignalBuy
-		}
-		decision.Quantity = currentPos.Quantity * 0.5 
-		decision.Reasoning = fmt.Sprintf("Stage 1 TP (+%.1f%%). Scaling out 50%%.", pnlPct*100)
-		return decision, nil
-	}
+	// STAGE 1: Removed Scaling Out to maximize Warp Runner potential
+
 
 	// STAGE 2: Safety Lock
 	if s.stage1Hit {
