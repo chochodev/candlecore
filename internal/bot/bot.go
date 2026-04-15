@@ -140,43 +140,30 @@ func (b *Bot) ApplyRiskGuards(candle exchange.Candle) {
 	// ─── SHIELD LOGIC (DYNAMIC SL) ───────────────────────────────────────────
 
 	if pos.Side == "long" {
-		pnlNow := (candle.High - pos.EntryPrice) / pos.EntryPrice
+		// ─── SHIELD LOGIC (LONG) ─────────────────────────────────────────────
+		feeBreakeven := pos.EntryPrice * 1.0022
+		if candle.High > feeBreakeven && pos.TrailingSL == nil {
+			pos.TrailingSL = &feeBreakeven
+		}
 
 		// ─── WARP RUNNER (LONG) ───────────────
+		// If we reach 90% of TP, push TP further and lock SL at the old TP door
 		tpDistance := pos.TakeProfit - pos.EntryPrice
-		warpTrigger := pos.EntryPrice + (tpDistance * 0.85)
+		warpTrigger := pos.EntryPrice + (tpDistance * 0.9)
 
 		if candle.High >= warpTrigger {
 			oldTP := pos.TakeProfit
-			pos.TakeProfit = oldTP + (tpDistance * 0.75) 
-			lockProfit := oldTP * 0.999                 
+			pos.TakeProfit = oldTP + (tpDistance * 0.5) // Extend by 50% of original distance
+			lockProfit := oldTP * 0.998                 // Lock 0.2% below previous TP
 			if pos.TrailingSL == nil || lockProfit > *pos.TrailingSL {
-				st := lockProfit
-				pos.TrailingSL = &st
-			}
-		}
-
-		// ─── PROFIT RATCHET (LONG) ─────────────────────────────────────────────
-		// ELASTIC RATCHET: Give it 0.6% room early to avoid noise, tighten to 0.1% later
-		trailFracLong := 0.006 // 0.6% room
-		if pnlNow > 0.03 {
-			trailFracLong = 0.001 // 0.1% Tight Lock
-		}
-
-		// Only start ratcheting once we are at least 1.0% in profit
-		if pnlNow > 0.01 {
-			if candle.High > pos.EntryPrice {
-				candPrice := candle.High * (1.0 - trailFracLong)
-				if candPrice > pos.StopLoss && (pos.TrailingSL == nil || candPrice > *pos.TrailingSL) {
-					st := candPrice
-					pos.TrailingSL = &st
-				}
+				pos.TrailingSL = &lockProfit
 			}
 		}
 
 		// ─── EXIT ENFORCEMENT (LONG) ──────────────────────────────────────────
 		slPrice := pos.StopLoss
 		if pos.TrailingSL != nil {
+			// HARDENED GUARD: TrailingSL (Shield) ALWAYS overrides strategy StopLoss
 			slPrice = *pos.TrailingSL
 		}
 
@@ -187,42 +174,29 @@ func (b *Bot) ApplyRiskGuards(candle exchange.Candle) {
 		}
 
 	} else if pos.Side == "short" {
-		pnlNow := (pos.EntryPrice - candle.Low) / pos.EntryPrice
+		// ─── SHIELD LOGIC (SHORT) ────────────────────────────────────────────
+		feeBreakeven := pos.EntryPrice * 0.9978
+		if candle.Low < feeBreakeven && pos.TrailingSL == nil {
+			pos.TrailingSL = &feeBreakeven
+		}
 
 		// ─── WARP RUNNER (SHORT) ──────────────
 		tpDistance := pos.EntryPrice - pos.TakeProfit
-		warpTrigger := pos.EntryPrice - (tpDistance * 0.85)
+		warpTrigger := pos.EntryPrice - (tpDistance * 0.9)
 
 		if candle.Low <= warpTrigger {
 			oldTP := pos.TakeProfit
-			pos.TakeProfit = oldTP - (tpDistance * 0.75) 
-			lockProfit := oldTP * 1.001                 
+			pos.TakeProfit = oldTP - (tpDistance * 0.5) // Extend down
+			lockProfit := oldTP * 1.002                 // Lock 0.2% above previous TP
 			if pos.TrailingSL == nil || lockProfit < *pos.TrailingSL {
-				st := lockProfit
-				pos.TrailingSL = &st
-			}
-		}
-
-		// ─── PROFIT RATCHET (SHORT) ────────────────────────────────────────────
-		trailFracShort := 0.006 // 0.6% room
-		if pnlNow > 0.03 {
-			trailFracShort = 0.001 // 0.1% Tight Lock
-		}
-
-		// Start ratcheting at 1.0% profit
-		if pnlNow > 0.01 {
-			if candle.Low < pos.EntryPrice {
-				candPrice := candle.Low * (1.0 + trailFracShort)
-				if candPrice < pos.StopLoss && (pos.TrailingSL == nil || candPrice < *pos.TrailingSL) {
-					st := candPrice
-					pos.TrailingSL = &st
-				}
+				pos.TrailingSL = &lockProfit
 			}
 		}
 
 		// ─── EXIT ENFORCEMENT (SHORT) ─────────────────────────────────────────
 		slPrice := pos.StopLoss
 		if pos.TrailingSL != nil {
+			// HARDENED GUARD: TrailingSL (Shield) ALWAYS overrides strategy StopLoss
 			slPrice = *pos.TrailingSL
 		}
 
@@ -333,20 +307,8 @@ func (b *Bot) enterPosition(side string, price float64, decision *Decision) {
 	// Calculate slippage (0.05% typically for high-liquidity pairs)
 	slippedPrice := price * 1.0005
 
-	// Calculate position size (30% of balance, but at least $4 min trade)
-	// Apply 10x Production Leverage
-	const leverage = 10.0
-	tradeAmount := b.balance * 0.3 * leverage
-	if tradeAmount < 4.0 {
-		tradeAmount = 4.0
-	}
-	// Safety check: Don't exceed current balance * leverage
-	maxAllowed := b.balance * 0.9 * leverage
-	if tradeAmount > maxAllowed {
-		tradeAmount = maxAllowed
-	}
-
-	quantity := tradeAmount / slippedPrice
+	// Calculate position size (use 10% of balance for simplicity)
+	quantity := (b.balance * 0.1) / slippedPrice
 	fee := (quantity * slippedPrice) * 0.001 // 0.1% Taker Fee
 	b.balance -= fee
 
@@ -360,15 +322,15 @@ func (b *Bot) enterPosition(side string, price float64, decision *Decision) {
 		UnrealizedPnL: 0,
 		EntryFee:      fee,
 		OpenedAt:      decision.Timestamp,
-		StopLoss:      decision.Price * 0.985, // 1.5% SL
-		TakeProfit:    decision.Price * 1.05,  // 5% TP
+		StopLoss:      decision.Price * 0.992, // Dynamic fallback: 0.8% stop
+		TakeProfit:    decision.Price * 1.018, // Dynamic fallback: 1.8% TP
 		Reasoning:     decision.Reasoning,
 	}
 
 	// Correct for Short positions
 	if side == "short" {
-		b.position.StopLoss = decision.Price * 1.015
-		b.position.TakeProfit = decision.Price * 0.95
+		b.position.StopLoss = decision.Price * 1.008
+		b.position.TakeProfit = decision.Price * 0.982
 	}
 }
 

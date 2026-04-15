@@ -60,6 +60,21 @@ type Hub struct {
 	mu         sync.RWMutex
 }
 
+// clientCount returns the number of active clients.
+func (h *Hub) clientCount() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.clients)
+}
+
+// removeClient safely removes and closes a client channel exactly once.
+func (h *Hub) removeClient(client *Client) {
+	if _, ok := h.clients[client]; ok {
+		delete(h.clients, client)
+		close(client.send)
+	}
+}
+
 // NewHub creates a new WebSocket hub
 func NewHub() *Hub {
 	return &Hub{
@@ -78,28 +93,39 @@ func (h *Hub) Run() {
 			h.mu.Lock()
 			h.clients[client] = true
 			h.mu.Unlock()
-			log.Printf("Client connected. Total clients: %d", len(h.clients))
+			log.Printf("Client connected. Total clients: %d", h.clientCount())
 
 		case client := <-h.unregister:
 			h.mu.Lock()
-			if _, ok := h.clients[client]; ok {
-				delete(h.clients, client)
-				close(client.send)
-			}
+			h.removeClient(client)
 			h.mu.Unlock()
-			log.Printf("Client disconnected. Total clients: %d", len(h.clients))
+			log.Printf("Client disconnected. Total clients: %d", h.clientCount())
 
 		case event := <-h.broadcast:
+			// Snapshot under read lock to avoid mutating map during iteration.
 			h.mu.RLock()
+			clients := make([]*Client, 0, len(h.clients))
 			for client := range h.clients {
+				clients = append(clients, client)
+			}
+			h.mu.RUnlock()
+
+			stale := make([]*Client, 0)
+			for _, client := range clients {
 				select {
 				case client.send <- event:
 				default:
-					close(client.send)
-					delete(h.clients, client)
+					stale = append(stale, client)
 				}
 			}
-			h.mu.RUnlock()
+
+			if len(stale) > 0 {
+				h.mu.Lock()
+				for _, client := range stale {
+					h.removeClient(client)
+				}
+				h.mu.Unlock()
+			}
 		}
 	}
 }

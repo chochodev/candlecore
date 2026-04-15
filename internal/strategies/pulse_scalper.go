@@ -52,9 +52,9 @@ func (s *PulseScalperStrategy) Analyze(candles []exchange.Candle, currentPos *bo
 		Timestamp: candles[len(candles)-1].Timestamp,
 		Price:     lastClose,
 		Indicators: map[string]float64{
-			"ema_9":   lastEMA9,
-			"ema_21":  lastEMA21,
-			"rsi_14":  lastRSI,
+			"ema_9":  lastEMA9,
+			"ema_21": lastEMA21,
+			"rsi_14": lastRSI,
 		},
 	}
 
@@ -90,7 +90,6 @@ func (s *PulseScalperStrategy) Analyze(candles []exchange.Candle, currentPos *bo
 
 	// STAGE 1: Removed Scaling Out to maximize Warp Runner potential
 
-
 	// STAGE 2: Safety Lock
 	if s.stage1Hit {
 		isUnderwater := (currentPos.Side == "long" && lastClose <= entryPrice) || (currentPos.Side == "short" && lastClose >= entryPrice)
@@ -103,7 +102,7 @@ func (s *PulseScalperStrategy) Analyze(candles []exchange.Candle, currentPos *bo
 			decision.Reasoning = "Safety Lock: Exit at Break-even after Stage 1"
 			return decision, nil
 		}
-		
+
 		if pnlPct >= s.tp2Pct {
 			if currentPos.Side == "long" {
 				decision.Signal = bot.SignalSell

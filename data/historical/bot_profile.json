@@ -1,10 +1,10 @@
 {
   "symbol": "sol",
-  "timeframe": "1h",
-  "strategy": "ma_crossover",
+  "timeframe": "5m",
+  "strategy": "pulse_scalper",
   "replay_mode": true,
   "dry_run": true,
-  "replay_speed": 1,
+  "replay_speed": 0,
   "parameters": null,
-  "is_running": true
+  "is_running": false
 }
