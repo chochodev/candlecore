@@ -6,6 +6,7 @@ import (
 	"candlecore/internal/engine"
 	"candlecore/internal/exchange"
 	"candlecore/internal/strategies"
+	"candlecore/internal/research"
 	"fmt"
 	"os"
 	"time"
@@ -170,18 +171,39 @@ var backtestCmd = &cobra.Command{
 		report.Duration = duration
 
 		// 7. Output Results
-		fmt.Println("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-		fmt.Printf("🏁 BACKTEST RESULTS: %s\n", strategyName)
-		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-		fmt.Printf("💰 Initial Balance:  $%.2f\n", report.InitialBalance)
-		fmt.Printf("💵 Final Balance:    $%.2f\n", report.FinalBalance)
-		fmt.Printf("📈 Total PnL:        $%.2f (%.2f%%)\n", report.TotalPnL, report.TotalPnLPct)
-		fmt.Printf("🔄 Total Trades:     %d\n", report.TotalTrades)
-		fmt.Printf("✅ Win Rate:         %.2f%%\n", report.WinRate)
-		fmt.Printf("📉 Max Drawdown:     $%.2f (%.2f%%)\n", report.MaxDrawdown, report.MaxDrawdownPct)
-		fmt.Printf("📊 Sharpe Ratio:     %.2f\n", report.SharpeRatio)
-		fmt.Printf("⏱️  Execution Time:   %v\n", report.Duration)
-		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		fmt.Println("\n------------------------------------------------------------")
+		fmt.Printf("BACKTEST RESULTS: %s\n", strategyName)
+		fmt.Println("------------------------------------------------------------")
+		fmt.Printf("Initial Balance:  $%.2f\n", report.InitialBalance)
+		fmt.Printf("Final Balance:    $%.2f\n", report.FinalBalance)
+		fmt.Printf("Total PnL:        $%.2f (%.2f%%)\n", report.TotalPnL, report.TotalPnLPct)
+		fmt.Printf("Total Trades:     %d\n", report.TotalTrades)
+		fmt.Printf("Win Rate:         %.2f%%\n", report.WinRate)
+		fmt.Printf("Max Drawdown:     $%.2f (%.2f%%)\n", report.MaxDrawdown, report.MaxDrawdownPct)
+		fmt.Printf("Sharpe Ratio:     %.2f\n", report.SharpeRatio)
+		fmt.Printf("Execution Time:   %v\n", report.Duration)
+		fmt.Println("------------------------------------------------------------")
+	},
+}
+
+// discoverCmd runs the statistical discovery engine
+var discoverCmd = &cobra.Command{
+	Use:   "discover",
+	Short: "Discovery Proven Statistical Edges",
+	Long:  "Analyzes historical data to discover high-expectancy trading conditions using valid quant methodologies.",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Printf("Starting Statistical Discovery... Symbol: sol, DataDir: %s\n", dataDir)
+		
+		provider := exchange.NewLocalFileProvider(dataDir)
+		transformer := research.NewDataTransformer(provider)
+		
+		dataset, err := transformer.GenerateDataset("sol")
+		if err != nil {
+			fmt.Printf("Discovery error: %v\n", err)
+			return
+		}
+
+		research.ValidateEdge(dataset)
 	},
 }
 
@@ -199,6 +221,7 @@ func init() {
 
 	rootCmd.AddCommand(serveCmd)
 	rootCmd.AddCommand(backtestCmd)
+	rootCmd.AddCommand(discoverCmd)
 }
 
 // Execute runs the root command
