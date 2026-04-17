@@ -45,6 +45,7 @@ type Position struct {
 type StrategyConfig struct {
 	// Risk Management
 	Stoploss      float64            // Fixed stoploss percentage (e.g., -0.05 = -5%)
+	Takeprofit    float64            // Fixed take profit percentage (e.g., 0.05 = 5%)
 	TrailingStop  bool               // Enable trailing stoploss
 	TrailingDelta float64            // Trailing stop distance (e.g., 0.02 = 2%)
 	MinimalROI    map[int]float64    // Time-based minimal ROI {minutes: roi_percentage}

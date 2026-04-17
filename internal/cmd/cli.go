@@ -14,7 +14,13 @@ import (
 )
 
 var (
-	dataDir string
+	dataDir        string
+	symbol         string
+	timeframe      string
+	strategyName   string
+	initialBalance float64
+	startStr       string
+	endStr         string
 )
 
 // rootCmd represents the base command
@@ -58,13 +64,6 @@ var backtestCmd = &cobra.Command{
 	Short: "Run a high-performance backtest on historical data",
 	Long:  "Executes a trading strategy across the entire historical dataset in milliseconds and provides performance metrics.",
 	Run: func(cmd *cobra.Command, args []string) {
-		symbol, _ := cmd.Flags().GetString("symbol")
-		timeframeStr, _ := cmd.Flags().GetString("timeframe")
-		strategyName, _ := cmd.Flags().GetString("strategy")
-		initialBalance, _ := cmd.Flags().GetFloat64("balance")
-		startStr, _ := cmd.Flags().GetString("start")
-		endStr, _ := cmd.Flags().GetString("end")
-
 		var startTime, endTime time.Time
 		if startStr != "" {
 			startTime, _ = time.Parse("2006-01-02", startStr)
@@ -75,19 +74,19 @@ var backtestCmd = &cobra.Command{
 			endTime = endTime.Add(23*time.Hour + 59*time.Minute)
 		}
 
-		timeframe := exchange.Timeframe(timeframeStr)
-		fmt.Printf("🚀 Starting Backtest: strategy=%s, symbol=%s, timeframe=%s\n", strategyName, symbol, timeframe)
+		tf := exchange.Timeframe(timeframe)
+		fmt.Printf("Starting Backtest: strategy=%s, symbol=%s, timeframe=%s\n", strategyName, symbol, tf)
 		if !startTime.IsZero() || !endTime.IsZero() {
-			fmt.Printf("📅 Window: %s to %s\n", startStr, endStr)
+			fmt.Printf("Window: %s to %s\n", startStr, endStr)
 		}
 
 		// 1. Data Provider
 		provider := exchange.NewLocalFileProvider(dataDir)
 
 		// 2. Load and Filter Candles
-		allCandles, err := provider.GetCandles(symbol, timeframe, 0)
+		allCandles, err := provider.GetCandles(symbol, tf, 0)
 		if err != nil {
-			fmt.Printf("❌ Error loading data: %v\n", err)
+			fmt.Printf("Error loading data: %v\n", err)
 			return
 		}
 
@@ -133,7 +132,7 @@ var backtestCmd = &cobra.Command{
 		// 4. Initialize Bot (Headless)
 		b := bot.NewBot(strategy, provider, bot.Config{
 			Symbol:         symbol,
-			Timeframe:      timeframe,
+			Timeframe:      tf,
 			InitialBalance: initialBalance,
 			PositionSize:   10,
 		})
@@ -141,7 +140,7 @@ var backtestCmd = &cobra.Command{
 		// 5. Run Backtest
 		start := time.Now()
 		if err := b.RunBacktest(runCandles); err != nil {
-			fmt.Printf("❌ Backtest error: %v\n", err)
+			fmt.Printf("Backtest error: %v\n", err)
 			return
 		}
 		duration := time.Since(start)
@@ -167,7 +166,7 @@ var backtestCmd = &cobra.Command{
 		report := engine.CalculateMetrics(initialBalance, engineTrades, history)
 		report.StrategyName = strategyName
 		report.Symbol = symbol
-		report.Timeframe = timeframeStr
+		report.Timeframe = timeframe
 		report.Duration = duration
 
 		// 7. Output Results
@@ -191,12 +190,12 @@ func init() {
 	
 	serveCmd.Flags().StringP("port", "p", "8080", "Port to run the server on")
 	
-	backtestCmd.Flags().StringP("symbol", "s", "bitcoin", "Trading symbol")
-	backtestCmd.Flags().StringP("timeframe", "t", "1h", "Candle timeframe (1m, 5m, 1h, 1d)")
-	backtestCmd.Flags().String("strategy", "ma_crossover", "Strategy name")
-	backtestCmd.Flags().Float64P("balance", "b", 10000.0, "Initial balance")
-	backtestCmd.Flags().String("start", "", "Start date (YYYY-MM-DD)")
-	backtestCmd.Flags().String("end", "", "End date (YYYY-MM-DD)")
+	backtestCmd.Flags().StringVarP(&symbol, "symbol", "s", "sol", "Trading symbol")
+	backtestCmd.Flags().StringVar(&timeframe, "timeframe", "15m", "Timeframe (e.g., 5m, 15m, 1h)")
+	backtestCmd.Flags().StringVar(&strategyName, "strategy", "vanguard_m15", "Strategy name")
+	backtestCmd.Flags().Float64VarP(&initialBalance, "balance", "b", 10000.0, "Initial balance")
+	backtestCmd.Flags().StringVar(&startStr, "start", "", "Start date (YYYY-MM-DD)")
+	backtestCmd.Flags().StringVar(&endStr, "end", "", "End date (YYYY-MM-DD)")
 
 	rootCmd.AddCommand(serveCmd)
 	rootCmd.AddCommand(backtestCmd)

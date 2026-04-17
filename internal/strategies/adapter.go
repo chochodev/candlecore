@@ -91,6 +91,11 @@ func (a *StrategyAdapter) Analyze(candles []exchange.Candle, currentPos *bot.Pos
 	return decision, nil
 }
 
+// GetConfig returns the adapted strategy's configuration
+func (a *StrategyAdapter) GetConfig() strategy.StrategyConfig {
+	return a.strategy.GetConfig()
+}
+
 // Configure updates strategy parameters (placeholder for now)
 func (a *StrategyAdapter) Configure(params map[string]interface{}) error {
 	// TODO: Allow runtime configuration

@@ -2,6 +2,7 @@ package bot
 
 import (
 	"candlecore/internal/exchange"
+	"candlecore/internal/strategy"
 	"time"
 )
 
@@ -51,6 +52,9 @@ type Position struct {
 type Strategy interface {
 	// Name returns the strategy name
 	Name() string
+
+	// GetConfig returns the strategy configuration
+	GetConfig() strategy.StrategyConfig
 
 	// Analyze analyzes candles and produces a decision
 	Analyze(candles []exchange.Candle, currentPos *Position) (*Decision, error)
@@ -137,33 +141,10 @@ func (b *Bot) ApplyRiskGuards(candle exchange.Candle) {
 	pos := b.position
 	price := candle.Close
 
-	// ─── SHIELD LOGIC (DYNAMIC SL) ───────────────────────────────────────────
-
 	if pos.Side == "long" {
-		// ─── SHIELD LOGIC (LONG) ─────────────────────────────────────────────
-		feeBreakeven := pos.EntryPrice * 1.0022
-		if candle.High > feeBreakeven && pos.TrailingSL == nil {
-			pos.TrailingSL = &feeBreakeven
-		}
-
-		// ─── WARP RUNNER (LONG) ───────────────
-		// If we reach 90% of TP, push TP further and lock SL at the old TP door
-		tpDistance := pos.TakeProfit - pos.EntryPrice
-		warpTrigger := pos.EntryPrice + (tpDistance * 0.9)
-
-		if candle.High >= warpTrigger {
-			oldTP := pos.TakeProfit
-			pos.TakeProfit = oldTP + (tpDistance * 0.5) // Extend by 50% of original distance
-			lockProfit := oldTP * 0.998                 // Lock 0.2% below previous TP
-			if pos.TrailingSL == nil || lockProfit > *pos.TrailingSL {
-				pos.TrailingSL = &lockProfit
-			}
-		}
-
 		// ─── EXIT ENFORCEMENT (LONG) ──────────────────────────────────────────
 		slPrice := pos.StopLoss
 		if pos.TrailingSL != nil {
-			// HARDENED GUARD: TrailingSL (Shield) ALWAYS overrides strategy StopLoss
 			slPrice = *pos.TrailingSL
 		}
 
@@ -174,29 +155,9 @@ func (b *Bot) ApplyRiskGuards(candle exchange.Candle) {
 		}
 
 	} else if pos.Side == "short" {
-		// ─── SHIELD LOGIC (SHORT) ────────────────────────────────────────────
-		feeBreakeven := pos.EntryPrice * 0.9978
-		if candle.Low < feeBreakeven && pos.TrailingSL == nil {
-			pos.TrailingSL = &feeBreakeven
-		}
-
-		// ─── WARP RUNNER (SHORT) ──────────────
-		tpDistance := pos.EntryPrice - pos.TakeProfit
-		warpTrigger := pos.EntryPrice - (tpDistance * 0.9)
-
-		if candle.Low <= warpTrigger {
-			oldTP := pos.TakeProfit
-			pos.TakeProfit = oldTP - (tpDistance * 0.5) // Extend down
-			lockProfit := oldTP * 1.002                 // Lock 0.2% above previous TP
-			if pos.TrailingSL == nil || lockProfit < *pos.TrailingSL {
-				pos.TrailingSL = &lockProfit
-			}
-		}
-
 		// ─── EXIT ENFORCEMENT (SHORT) ─────────────────────────────────────────
 		slPrice := pos.StopLoss
 		if pos.TrailingSL != nil {
-			// HARDENED GUARD: TrailingSL (Shield) ALWAYS overrides strategy StopLoss
 			slPrice = *pos.TrailingSL
 		}
 
@@ -321,6 +282,9 @@ func (b *Bot) enterPosition(side string, price float64, decision *Decision) {
 	fee := (quantity * slippedPrice) * 0.001 // 0.1% Taker Fee
 	b.balance -= fee
 
+	// DYNAMIC RISK MANAGEMENT: Inherit from Strategy Config
+	conf := b.strategy.GetConfig()
+
 	b.position = &Position{
 		ID:            b.generateID(),
 		Symbol:        b.symbol,
@@ -331,15 +295,15 @@ func (b *Bot) enterPosition(side string, price float64, decision *Decision) {
 		UnrealizedPnL: 0,
 		EntryFee:      fee,
 		OpenedAt:      decision.Timestamp,
-		StopLoss:      decision.Price * 0.992, // Dynamic fallback: 0.8% stop
-		TakeProfit:    decision.Price * 1.018, // Dynamic fallback: 1.8% TP
+		StopLoss:      decision.Price * (1.0 + conf.Stoploss),
+		TakeProfit:    decision.Price * (1.0 + conf.Takeprofit),
 		Reasoning:     decision.Reasoning,
 	}
 
 	// Correct for Short positions
 	if side == "short" {
-		b.position.StopLoss = decision.Price * 1.008
-		b.position.TakeProfit = decision.Price * 0.982
+		b.position.StopLoss = decision.Price * (1.0 - conf.Stoploss)     // config SL is usually negative, so 1.0 - (-0.02) = 1.02
+		b.position.TakeProfit = decision.Price * (1.0 - conf.Takeprofit) // 1.0 - 0.05 = 0.95
 	}
 }
 
