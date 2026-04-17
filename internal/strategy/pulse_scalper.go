@@ -34,13 +34,15 @@ func init() {
 
 func (s *PulseScalperStrategy) PopulateIndicators(df *DataFrame) error {
 	if len(df.Candles) < 50 {
-		return fmt.Errorf("insufficient data")
+		return fmt.Errorf("insufficient data: %d", len(df.Candles))
 	}
 	if df.Indicators == nil { df.Indicators = make(map[string][]float64) }
 	closes := ExtractCloses(df.Candles)
+
 	ema5, _ := indicators.EMA(closes, 5)
 	ema12, _ := indicators.EMA(closes, 12)
 	rsi14, _ := indicators.RSI(closes, 14)
+
 	df.Indicators["ema_5"] = Pad(ema5, len(df.Candles))
 	df.Indicators["ema_12"] = Pad(ema12, len(df.Candles))
 	df.Indicators["rsi_14"] = Pad(rsi14, len(df.Candles))
@@ -48,20 +50,22 @@ func (s *PulseScalperStrategy) PopulateIndicators(df *DataFrame) error {
 }
 
 func (s *PulseScalperStrategy) PopulateEntrySignal(df *DataFrame, current Candle) Signal {
-	lastEMA5 := GetVal(df, "ema_5")
-	lastEMA12 := GetVal(df, "ema_12")
-	lastRSI := GetVal(df, "rsi_14")
+	ema5 := GetVal(df, "ema_5")
+	ema12 := GetVal(df, "ema_12")
+	rsi := GetVal(df, "rsi_14")
 
-	if lastEMA5 > lastEMA12 && current.Close > lastEMA5 && lastRSI > 45 && lastRSI < 65 {
+	if ema5 == 0 { return Signal{Action: "hold"} }
+
+	// FAST CROSS ENTRY: Catch the ripple as it turns into a wave
+	if ema5 > ema12 && rsi < 65 {
 		return Signal{
-			Action: "buy", Price: current.Close, Reason: "Pulse Entry (Long)",
+			Action: "buy", Price: current.Close, Reason: "Fast Pulse: Bullish Cross",
 		}
 	}
 
-	// Short Pulse: Mirror of Long
-	if lastEMA5 < lastEMA12 && current.Close < lastEMA5 && lastRSI < 55 && lastRSI > 35 {
+	if ema5 < ema12 && rsi > 35 {
 		return Signal{
-			Action: "sell", Price: current.Close, Reason: "Pulse Entry (Short)",
+			Action: "sell", Price: current.Close, Reason: "Fast Pulse: Bearish Cross",
 		}
 	}
 
@@ -69,49 +73,9 @@ func (s *PulseScalperStrategy) PopulateEntrySignal(df *DataFrame, current Candle
 }
 
 func (s *PulseScalperStrategy) PopulateExitSignal(df *DataFrame, current Candle, pos Position) Signal {
-	lastEMA5 := GetVal(df, "ema_5")
-	lastEMA12 := GetVal(df, "ema_12")
-
-	// P&L calculation based on position side
-	var pnlPct float64
-	if pos.Side == "long" {
-		pnlPct = (current.Close - pos.EntryPrice) / pos.EntryPrice
-	} else {
-		pnlPct = (pos.EntryPrice - current.Close) / pos.EntryPrice
-	}
-
-	shieldActive := s.shieldActivated[pos.EntryTime]
-
-	// FEE SHIELD (v1.3.1): Multi-Vector Logic
-	if !shieldActive && pnlPct >= 0.001 {
-		s.shieldActivated[pos.EntryTime] = true
-		
-		var lockPrice float64
-		if pos.Side == "long" {
-			lockPrice = pos.EntryPrice * 1.001
-		} else {
-			lockPrice = pos.EntryPrice * 0.999
-		}
-
-		return Signal{
-			Action:     "hold",
-			Price:      current.Close,
-			Reason:     "Fee Shield Triggered (+0.1%). Locking profit vector.",
-			TrailingSL: &lockPrice,
-		}
-	}
-
-	// Engine now handles Autonomous TP/SL Exits in real-time (Intra-candle).
-	// Strategy only handles Trend Reversal (EMA Crosses) at candle close.
-
-	// ── Trend Reversal Exits ───────────────────────────────────────────────────
-	if pos.Side == "long" && lastEMA5 < lastEMA12 {
-		return Signal{Action: "sell", Price: current.Close, Reason: "Trend Flip Exit (Long)"}
-	}
-	if pos.Side == "short" && lastEMA5 > lastEMA12 {
-		return Signal{Action: "buy", Price: current.Close, Reason: "Trend Flip Exit (Short)"}
-	}
-
+	// v3.0: PURE ASYMMETRIC COMMITTMENT
+	// We let the bot engine's TP (+1.4%) and SL (-0.7%) do the work.
+	// No intermediate exit logic to prevent fee-whiplash.
 	return Signal{Action: "hold"}
 }
 

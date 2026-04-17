@@ -275,6 +275,9 @@ func (b *Bot) executeDecision(decision *Decision, candle exchange.Candle) {
 			if decision.Reasoning == "Pulse Entry (Long)" {
 				b.enterPosition("long", candle.Close, decision)
 			}
+		} else {
+			// Already long, update PnL
+			b.updatePosition(candle.Close)
 		}
 	case SignalSell:
 		if b.position == nil {
@@ -289,6 +292,9 @@ func (b *Bot) executeDecision(decision *Decision, candle exchange.Candle) {
 					b.enterPosition("short", candle.Close, decision)
 				}
 			}
+		} else {
+			// Already short, update PnL
+			b.updatePosition(candle.Close)
 		}
 	case SignalHold:
 		if b.position != nil {
@@ -306,6 +312,9 @@ func (b *Bot) enterPosition(side string, price float64, decision *Decision) {
 
 	// Calculate slippage (0.05% typically for high-liquidity pairs)
 	slippedPrice := price * 1.0005
+	if side == "short" {
+		slippedPrice = price * 0.9995
+	}
 
 	// Calculate position size (use 10% of balance for simplicity)
 	quantity := (b.balance * 0.1) / slippedPrice
@@ -341,6 +350,9 @@ func (b *Bot) closePosition(price float64) {
 	}
 
 	slippedPrice := price * 0.9995
+	if b.position.Side == "short" {
+		slippedPrice = price * 1.0005
+	}
 
 	// Calculate PnL
 	var pnl float64
@@ -367,7 +379,6 @@ func (b *Bot) closePosition(price float64) {
 
 	// Store trade
 	trade := *b.position
-	trade.RealizedPnL -= exitFee
 	b.trades = append(b.trades, trade)
 
 	// Clear position
